@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 from core.config import settings
-from routers import auth, users, audit, oauth
+from routers import auth, users, audit, oauth, admin
 from core.logging import setup_logging, CorrelationIdMiddleware
 
 setup_logging()
@@ -13,6 +14,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Expose Prometheus metrics
+Instrumentator().instrument(app).expose(app)
 
 @app.get("/health")
 async def health_check():
@@ -39,6 +43,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(oauth.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 
 @app.get("/")
