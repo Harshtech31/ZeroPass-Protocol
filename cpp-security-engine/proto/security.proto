@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package zeropass;
+
+service SecurityService {
+    rpc VerifySignature(SignatureRequest) returns (SignatureResponse);
+    rpc ValidateToken(TokenRequest) returns (TokenResponse);
+    rpc GetRiskScore(RiskRequest) returns (RiskResponse);
+}
+
+message SignatureRequest {
+    bytes public_key = 1;
+    bytes signature = 2;
+    bytes data = 3;
+}
+
+message SignatureResponse {
+    bool valid = 1;
+    string error_message = 2;
+}
+
+message TokenRequest {
+    string token = 1;
+}
+
+message TokenResponse {
+    bool valid = 1;
+    string subject = 2;
+    repeated string roles = 3;
+}
+
+message RiskRequest {
+    string user_id = 1;
+    string device_id = 2;
+    string ip_address = 3;
+}
+
+message RiskResponse {
+    float score = 1;
+    string risk_level = 2;
+}
