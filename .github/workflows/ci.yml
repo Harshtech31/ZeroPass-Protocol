@@ -73,3 +73,14 @@ jobs:
         run: pip install pip-audit
       - name: Audit Python dependencies
         run: pip-audit -r backend/requirements.txt
+  docker-stack-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
+      - name: Build Stack (Dry Run)
+        run: docker compose build
+      - name: Check Nginx Config
+        run: |
+          docker run --rm -v $(pwd)/nginx/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine nginx -t

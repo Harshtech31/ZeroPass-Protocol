@@ -6,32 +6,101 @@ import Link from 'next/link';
 export default function SOCDashboard() {
   const [stats, setStats] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [isLockdown, setIsLockdown] = useState(false);
   const [selectedLog, setSelectedLog] = useState<string | null>(null);
+  const [isPromoting, setIsPromoting] = useState<string | null>(null);
   const baseUrl = '/api';
 
+  const fetchSOCData = async () => {
+    const token = localStorage.getItem('access_token');
+    const headers = { 'Authorization': `Bearer ${token}` };
+
+    try {
+      const [statsRes, logsRes, usersRes] = await Promise.all([
+        fetch(`${baseUrl}/audit/stats`, { headers }),
+        fetch(`${baseUrl}/audit/logs?limit=50`, { headers }),
+        fetch(`${baseUrl}/admin/users`, { headers })
+      ]);
+
+      if (statsRes.ok) setStats(await statsRes.json());
+      if (logsRes.ok) setLogs(await logsRes.json());
+      if (usersRes.ok) setUsers(await usersRes.json());
+    } catch (err) {
+      console.error('SOC Fetch Error:', err);
+    }
+  };
+
   useEffect(() => {
-    const fetchSOCData = async () => {
-      const token = localStorage.getItem('access_token');
-      const headers = { 'Authorization': `Bearer ${token}` };
-
-      try {
-        const [statsRes, logsRes] = await Promise.all([
-          fetch(`${baseUrl}/audit/stats`, { headers }),
-          fetch(`${baseUrl}/audit/logs?limit=50`, { headers })
-        ]);
-
-        if (statsRes.ok) setStats(await statsRes.json());
-        if (logsRes.ok) setLogs(await logsRes.json());
-      } catch (err) {
-        console.error('SOC Fetch Error:', err);
-      }
-    };
-
     fetchSOCData();
-    const interval = setInterval(fetchSOCData, 10000); // Refresh every 10s
+    const interval = setInterval(fetchSOCData, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  const triggerStepUp = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const beginRes = await fetch(`${baseUrl}/auth/step-up/begin`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!beginRes.ok) throw new Error('Step-up initialization failed');
+      const options = await beginRes.json();
+
+      const { prepareLoginOptions, prepareLoginResponse } = await import('@/lib/webauthn');
+      const credential = await navigator.credentials.get({
+        publicKey: prepareLoginOptions(options)
+      });
+      if (!credential) return false;
+
+      const completeRes = await fetch(`${baseUrl}/auth/step-up/complete`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json' 
+        },
+        body: JSON.stringify(prepareLoginResponse(credential)),
+      });
+
+      return completeRes.ok;
+    } catch (err) {
+      console.error('Step-up failed:', err);
+      return false;
+    }
+  };
+
+  const handlePromote = async (userId: string, username: string) => {
+    if (!confirm(`Are you sure you want to promote ${username} to ADMIN? You will need to verify your hardware key.`)) return;
+
+    setIsPromoting(userId);
+    try {
+      // 1. Force Step-Up first
+      const verified = await triggerStepUp();
+      if (!verified) {
+        alert('Verification failed. Action cancelled.');
+        return;
+      }
+
+      // 2. Perform promotion
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`${baseUrl}/admin/promote/${userId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (res.ok) {
+        alert(`${username} has been promoted to ADMIN.`);
+        fetchSOCData(); // Refresh list
+      } else {
+        const err = await res.json();
+        alert(`Promotion failed: ${err.detail || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Promotion error:', err);
+    } finally {
+      setIsPromoting(null);
+    }
+  };
 
   const handleLockdown = () => {
     if (confirm('WARNING: Initializing Secure Lockdown will terminate all non-admin sessions. Proceed?')) {
@@ -43,7 +112,7 @@ export default function SOCDashboard() {
   };
 
   const handleExport = () => {
-    const data = JSON.stringify({ stats, logs }, null, 2);
+    const data = JSON.stringify({ stats, logs, users }, null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -115,9 +184,39 @@ export default function SOCDashboard() {
           ))}
         </div>
 
-        {/* Main Intelligence Section */}
+        {/* Main Sections */}
         <div className="grid grid-cols-12 gap-6">
           
+          {/* User Management (New Section) */}
+          <div className="col-span-12 lg:col-span-4 bento-card p-8">
+            <h2 className="text-xl font-black tracking-tight uppercase mb-8">User Manifest</h2>
+            <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
+              {users.map((u) => (
+                <div key={u.id} className="p-5 bg-[#0a101a]/40 border border-white/5 rounded-2xl group hover:border-[#7deded]/30 transition-all">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <p className="text-xs font-black text-white">{u.username}</p>
+                      <p className="text-[9px] font-bold text-[#686e78] uppercase tracking-widest">{u.role}</p>
+                    </div>
+                    {u.role !== 'admin' && (
+                      <button 
+                        onClick={() => handlePromote(u.id, u.username)}
+                        disabled={isPromoting === u.id}
+                        className="px-3 py-1 bg-[#7deded] text-[#0a101a] text-[9px] font-black uppercase rounded-lg hover:scale-105 transition-all disabled:bg-[#253754]"
+                      >
+                        {isPromoting === u.id ? 'Verifying...' : 'Promote'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-1 h-1 rounded-full ${u.is_active ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                    <span className="text-[9px] font-mono text-[#253754]">{u.id.slice(0, 8)}...</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Manifest (Span 8) */}
           <div className="col-span-12 lg:col-span-8 bento-card p-8">
             <div className="flex justify-between items-center mb-10">
@@ -173,45 +272,6 @@ export default function SOCDashboard() {
                   </div>
                 ))}
               </div>
-            </div>
-          </div>
-
-          {/* Side Panels (Span 4) */}
-          <div className="col-span-12 lg:col-span-4 space-y-6">
-            <div className="bento-card p-8">
-              <h3 className="text-sm font-black uppercase tracking-widest mb-6">System Posture</h3>
-              <div className="space-y-8">
-                <div>
-                  <div className="flex justify-between text-[10px] font-black uppercase tracking-widest mb-3">
-                    <span>Global Trust Level</span>
-                    <span className="text-cyan-400">98.4%</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-cyan-400 rounded-full w-[98.4%]"></div>
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-[10px] font-black uppercase tracking-widest mb-3">
-                    <span>Attack Pressure</span>
-                    <span className="text-yellow-400">Moderate</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-yellow-400 rounded-full w-[45%]"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bento-card p-8 bg-red-500/5 border border-red-500/20">
-              <div className="flex items-center gap-3 mb-4">
-                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <h3 className="text-sm font-black uppercase tracking-widest text-red-500">Protocol Advisory</h3>
-              </div>
-              <p className="text-[11px] text-[#686e78] leading-relaxed font-medium">
-                System heartbeat is stable. No unauthorized hardware attempts detected in the last 128 cycles.
-              </p>
             </div>
           </div>
 
