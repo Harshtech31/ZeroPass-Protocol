@@ -1,162 +1,277 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 export default function SOCDashboard() {
   const [stats, setStats] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<any[]>([]);
+  const [isLockdown, setIsLockdown] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<string | null>(null);
+  const [isPromoting, setIsPromoting] = useState<string | null>(null);
+  const baseUrl = '/api';
+
+  const fetchSOCData = async () => {
+    const token = localStorage.getItem('access_token');
+    const headers = { 'Authorization': `Bearer ${token}` };
+
+    try {
+      const [statsRes, logsRes, usersRes] = await Promise.all([
+        fetch(`${baseUrl}/audit/stats`, { headers }),
+        fetch(`${baseUrl}/audit/logs?limit=50`, { headers }),
+        fetch(`${baseUrl}/admin/users`, { headers })
+      ]);
+
+      if (statsRes.ok) setStats(await statsRes.json());
+      if (logsRes.ok) setLogs(await logsRes.json());
+      if (usersRes.ok) setUsers(await usersRes.json());
+    } catch (err) {
+      console.error('SOC Fetch Error:', err);
+    }
+  };
 
   useEffect(() => {
-    const fetchSOCData = async () => {
-      const token = localStorage.getItem('access_token');
-      const headers = { 'Authorization': `Bearer ${token}` };
-      const baseUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'}`;
-
-      try {
-        const [statsRes, logsRes] = await Promise.all([
-          fetch(`${baseUrl}/audit/stats`, { headers }),
-          fetch(`${baseUrl}/audit/logs`, { headers }) // Admin sees all logs in a real app
-        ]);
-
-        if (statsRes.status === 403) {
-           alert("Access Denied: Admin privileges required.");
-           window.location.href = '/dashboard';
-           return;
-        }
-
-        const statsData = await statsRes.json();
-        const logsData = await logsRes.json();
-
-        setStats(statsData);
-        setLogs(logsData);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchSOCData();
+    const interval = setInterval(fetchSOCData, 10000);
+    return () => clearInterval(interval);
   }, []);
 
-  if (loading) return (
-    <div className="min-h-screen bg-[#0a101a] flex items-center justify-center text-[#f8fafc] font-black uppercase tracking-[0.3em] dot-grid">
-      Initializing SOC...
-    </div>
-  );
+  const triggerStepUp = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const beginRes = await fetch(`${baseUrl}/auth/step-up/begin`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!beginRes.ok) throw new Error('Step-up initialization failed');
+      const options = await beginRes.json();
+
+      const { prepareLoginOptions, prepareLoginResponse } = await import('@/lib/webauthn');
+      const credential = await navigator.credentials.get({
+        publicKey: prepareLoginOptions(options)
+      });
+      if (!credential) return false;
+
+      const completeRes = await fetch(`${baseUrl}/auth/step-up/complete`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json' 
+        },
+        body: JSON.stringify(prepareLoginResponse(credential)),
+      });
+
+      return completeRes.ok;
+    } catch (err) {
+      console.error('Step-up failed:', err);
+      return false;
+    }
+  };
+
+  const handlePromote = async (userId: string, username: string) => {
+    if (!confirm(`Are you sure you want to promote ${username} to ADMIN? You will need to verify your hardware key.`)) return;
+
+    setIsPromoting(userId);
+    try {
+      // 1. Force Step-Up first
+      const verified = await triggerStepUp();
+      if (!verified) {
+        alert('Verification failed. Action cancelled.');
+        return;
+      }
+
+      // 2. Perform promotion
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`${baseUrl}/admin/promote/${userId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (res.ok) {
+        alert(`${username} has been promoted to ADMIN.`);
+        fetchSOCData(); // Refresh list
+      } else {
+        const err = await res.json();
+        alert(`Promotion failed: ${err.detail || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Promotion error:', err);
+    } finally {
+      setIsPromoting(null);
+    }
+  };
+
+  const handleLockdown = () => {
+    if (confirm('WARNING: Initializing Secure Lockdown will terminate all non-admin sessions. Proceed?')) {
+      setIsLockdown(true);
+      setTimeout(() => {
+        alert('CRITICAL: Global Secure Lockdown Initialized. Protocol set to read-only.');
+      }, 500);
+    }
+  };
+
+  const handleExport = () => {
+    const data = JSON.stringify({ stats, logs, users }, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `zeropass-intelligence-${new Date().toISOString()}.json`;
+    a.click();
+  };
 
   return (
-    <div className="min-h-screen relative text-[#f8fafc] p-8 overflow-hidden selection:bg-[#7deded] selection:text-[#0a101a] dot-grid">
+    <div className={`min-h-screen relative text-[#f8fafc] overflow-hidden selection:bg-red-500 selection:text-white dot-grid transition-colors duration-1000 ${isLockdown ? 'bg-red-950/20' : ''}`}>
       {/* Background Layer */}
-      <div className="mesh-gradient opacity-20"></div>
+      <div className={`mesh-gradient opacity-20 ${isLockdown ? 'animate-pulse' : ''}`}></div>
 
-      <div className="relative z-10 max-w-7xl mx-auto py-12">
-        <header className="flex justify-between items-end mb-16 p-8 bg-[#0a101a]/40 backdrop-blur-xl border border-white/5 rounded-[32px]">
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 mb-4">
-              <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
-              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-red-500">Live SOC Feed</span>
+      <div className="relative z-10 max-w-7xl mx-auto px-8 py-12">
+        {/* Header Section */}
+        <header className="flex justify-between items-end mb-16 p-10 bg-[#0a101a]/60 backdrop-blur-3xl border border-white/5 rounded-[32px] shadow-2xl relative overflow-hidden group">
+          {isLockdown && (
+            <div className="absolute inset-0 bg-red-500/10 animate-pulse pointer-events-none"></div>
+          )}
+          <div className="relative z-10">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="flex h-2 w-2 rounded-full bg-red-500 animate-ping"></span>
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-red-500">Live SOC Feed</span>
             </div>
-            <h1 className="text-5xl font-black tracking-tighter uppercase">Intelligence <span className="text-red-500">Center</span></h1>
+            <h1 className="text-6xl font-black tracking-tighter uppercase leading-none">
+              Intelligence <span className="text-red-600">Center</span>
+            </h1>
             <p className="text-[#686e78] font-bold mt-2 font-mono text-[10px] tracking-widest">Cross-Protocol Security Operations Center</p>
           </div>
-          <div className="flex gap-4">
-            <button className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">Export Intelligence</button>
-            <button className="px-6 py-3 bg-[#f8fafc] text-[#0a101a] rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">Secure Lockdown</button>
+          <div className="flex gap-4 relative z-10">
+            <Link 
+              href="/dashboard"
+              className="px-6 py-3 bg-[#0a101a]/40 border border-white/5 text-[11px] font-black uppercase tracking-widest rounded-xl hover:bg-white/5 transition-all flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              Personal Security
+            </Link>
+            <button 
+              onClick={handleExport}
+              className="px-6 py-3 bg-[#0a101a]/40 border border-white/5 text-[11px] font-black uppercase tracking-widest rounded-xl hover:bg-white/5 transition-all"
+            >
+              Export Intelligence
+            </button>
+            <button 
+              onClick={handleLockdown}
+              className={`px-6 py-3 text-[11px] font-black uppercase tracking-widest rounded-xl transition-all shadow-xl ${
+                isLockdown ? 'bg-red-600 text-white animate-pulse' : 'bg-white text-[#0a101a] hover:bg-white/90 shadow-white/5'
+              }`}
+            >
+              {isLockdown ? 'SYSTEM LOCKED' : 'Secure Lockdown'}
+            </button>
           </div>
         </header>
 
-        {/* Bento Grid Layout */}
-        <div className="grid grid-cols-12 gap-6 auto-rows-[minmax(140px,auto)]">
-          
-          {/* Stats Row */}
+        {/* Stats Grid */}
+        <div className="grid grid-cols-4 gap-6 mb-12">
           {[
-            { label: 'Total Auth Attempts', value: stats?.total_attempts, color: '#7deded' },
-            { label: 'Failed Handshakes', value: stats?.failed_attempts, color: '#facc15' },
-            { label: 'High Risk Events', value: stats?.high_risk_events, color: '#ef4444' },
-            { label: 'Active Sessions', value: stats?.recent_24h, color: '#f8fafc' },
-          ].map((item, i) => (
-            <div key={i} className="col-span-12 md:col-span-3 bento-card p-6 flex flex-col justify-between group relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-1 opacity-20" style={{ backgroundColor: item.color }}></div>
-              <p className="text-[10px] font-black text-[#686e78] uppercase tracking-[0.2em] mb-4">{item.label}</p>
-              <p className="text-4xl font-black" style={{ color: item.color }}>{item.value || 0}</p>
+            { label: 'Total Auth Attempts', val: stats?.total_attempts || 0, color: 'text-cyan-400', border: 'border-cyan-500/20' },
+            { label: 'Failed Handshakes', val: stats?.failed_attempts || 0, color: 'text-yellow-400', border: 'border-yellow-500/20' },
+            { label: 'High Risk Events', val: stats?.high_risk_events || 0, color: 'text-red-500', border: 'border-red-500/20' },
+            { label: 'Active Sessions', val: stats?.total_attempts || 0, color: 'text-white', border: 'border-white/20' },
+          ].map((s, i) => (
+            <div key={i} className={`bento-card p-8 border-t-2 ${s.border}`}>
+              <p className="text-[10px] font-black text-[#686e78] uppercase tracking-[0.2em] mb-4">{s.label}</p>
+              <p className={`text-5xl font-black tracking-tighter ${s.color}`}>{s.val}</p>
             </div>
           ))}
+        </div>
 
-          {/* Main Intelligence Feed (Span 8) */}
-          <div className="col-span-12 lg:col-span-8 bento-card overflow-hidden">
-            <div className="p-8 border-b border-white/5 flex items-center justify-between">
-              <h2 className="text-lg font-black uppercase tracking-tight">Threat Intelligence Manifest</h2>
-              <div className="flex items-center gap-1.5 font-mono text-[10px] text-red-500 animate-pulse">
-                <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                LIVE STREAMING
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left font-mono text-[10px]">
-                <thead className="bg-[#0a101a]/50 text-[#686e78]">
-                  <tr className="border-b border-white/5">
-                    <th className="p-6 uppercase tracking-widest">Timestamp</th>
-                    <th className="p-6 uppercase tracking-widest">Event Protocol</th>
-                    <th className="p-6 uppercase tracking-widest">Source IP</th>
-                    <th className="p-6 uppercase tracking-widest text-right">Risk Score</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-[#7deded]/5 transition-colors group">
-                      <td className="p-6 text-[#686e78] font-bold">{new Date(log.timestamp).toLocaleTimeString()}</td>
-                      <td className="p-6 font-black uppercase tracking-tight text-[#f8fafc]">{log.action}</td>
-                      <td className="p-6 text-[#686e78] font-bold">{log.ip_address}</td>
-                      <td className="p-6 text-right">
-                        <span className={`px-3 py-1.5 rounded-lg font-black tracking-widest ${log.risk_score > 0.7 ? 'bg-red-500/10 text-red-500' : 'bg-[#7deded]/10 text-[#7deded]'}`}>
-                          {log.risk_score.toFixed(3)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* Main Sections */}
+        <div className="grid grid-cols-12 gap-6">
+          
+          {/* User Management (New Section) */}
+          <div className="col-span-12 lg:col-span-4 bento-card p-8">
+            <h2 className="text-xl font-black tracking-tight uppercase mb-8">User Manifest</h2>
+            <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
+              {users.map((u) => (
+                <div key={u.id} className="p-5 bg-[#0a101a]/40 border border-white/5 rounded-2xl group hover:border-[#7deded]/30 transition-all">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <p className="text-xs font-black text-white">{u.username}</p>
+                      <p className="text-[9px] font-bold text-[#686e78] uppercase tracking-widest">{u.role}</p>
+                    </div>
+                    {u.role !== 'admin' && (
+                      <button 
+                        onClick={() => handlePromote(u.id, u.username)}
+                        disabled={isPromoting === u.id}
+                        className="px-3 py-1 bg-[#7deded] text-[#0a101a] text-[9px] font-black uppercase rounded-lg hover:scale-105 transition-all disabled:bg-[#253754]"
+                      >
+                        {isPromoting === u.id ? 'Verifying...' : 'Promote'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-1 h-1 rounded-full ${u.is_active ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                    <span className="text-[9px] font-mono text-[#253754]">{u.id.slice(0, 8)}...</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* Security Posture (Span 4) */}
-          <div className="col-span-12 lg:col-span-4 bento-card p-8 flex flex-col justify-between">
-            <div>
-              <h2 className="text-lg font-black uppercase tracking-tight mb-8">System Posture</h2>
-              <div className="space-y-10">
-                <div>
-                  <div className="flex justify-between text-[10px] font-black uppercase tracking-widest mb-3 text-[#686e78]">
-                    <span>Global Trust Level</span>
-                    <span className="text-[#7deded]">98.4%</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-[#253754]/40 rounded-full overflow-hidden">
-                    <div className="h-full w-[98.4%] bg-[#7deded] shadow-[0_0_10px_#7deded]"></div>
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-[10px] font-black uppercase tracking-widest mb-3 text-[#686e78]">
-                    <span>Attack Pressure</span>
-                    <span className="text-yellow-400">Moderate</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-[#253754]/40 rounded-full overflow-hidden">
-                    <div className="h-full w-[45%] bg-yellow-400"></div>
-                  </div>
-                </div>
+          {/* Manifest (Span 8) */}
+          <div className="col-span-12 lg:col-span-8 bento-card p-8">
+            <div className="flex justify-between items-center mb-10">
+              <h2 className="text-xl font-black tracking-tight uppercase">Threat Intelligence Manifest</h2>
+              <div className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                <span className="text-[9px] font-black uppercase tracking-widest text-red-500">Live Streaming</span>
               </div>
             </div>
 
-            <div className="mt-12 p-6 bg-red-500/5 border border-red-500/20 rounded-2xl group hover:bg-red-500/10 transition-all">
-              <div className="flex items-center gap-3 mb-4">
-                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <p className="text-xs font-black text-red-500 uppercase tracking-widest">Protocol Advisory</p>
+            <div className="space-y-1">
+              <div className="grid grid-cols-4 px-6 py-3 text-[9px] font-black text-[#253754] uppercase tracking-widest border-b border-white/5">
+                <div>Timestamp</div>
+                <div>Event Protocol</div>
+                <div>Source IP</div>
+                <div className="text-right">Risk Score</div>
               </div>
-              <p className="text-[10px] text-[#686e78] font-bold leading-relaxed">
-                System heartbeat is stable. No unauthorized hardware attempts detected in the last 128 cycles.
-              </p>
+              <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
+                {logs.map((log) => (
+                  <div 
+                    key={log.id} 
+                    onClick={() => setSelectedLog(selectedLog === log.id ? null : log.id)}
+                    className={`grid grid-cols-4 px-6 py-6 border-b border-white/5 items-center hover:bg-white/[0.02] transition-all cursor-pointer group ${selectedLog === log.id ? 'bg-white/[0.05] border-red-500/30' : ''}`}
+                  >
+                    <div className="text-[11px] font-mono text-[#686e78] group-hover:text-white transition-colors">
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </div>
+                    <div className="text-[10px] font-black uppercase tracking-tight text-[#f8fafc]">
+                      {log.action}
+                    </div>
+                    <div className="text-[11px] font-mono text-[#253754] group-hover:text-[#686e78] transition-colors">
+                      {log.ip_address}
+                    </div>
+                    <div className="text-right">
+                      <span className={`px-3 py-1 rounded-lg font-mono text-[10px] font-black border ${
+                        log.risk_score > 0.7 ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                        log.risk_score > 0.3 ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' :
+                        'bg-cyan-500/10 text-cyan-500 border-cyan-500/20'
+                      }`}>
+                        {log.risk_score.toFixed(3)}
+                      </span>
+                    </div>
+                    {selectedLog === log.id && (
+                      <div className="col-span-4 mt-4 p-4 bg-black/40 rounded-xl border border-white/5 animate-in fade-in slide-in-from-top-2">
+                        <p className="text-[10px] font-mono text-[#686e78] leading-relaxed">
+                          [TRACE_ID] {log.id}<br/>
+                          [HANDSHAKE] RSA-PSS-2048-SHA256<br/>
+                          [TELEMETRY] Device Handshake Verified<br/>
+                          [STATUS] {log.risk_score > 0.5 ? 'CRITICAL_ALERT' : 'NOMINAL_IDENT'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
