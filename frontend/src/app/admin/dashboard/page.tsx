@@ -11,11 +11,12 @@ export default function SOCDashboard() {
     const fetchSOCData = async () => {
       const token = localStorage.getItem('access_token');
       const headers = { 'Authorization': `Bearer ${token}` };
+      const baseUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api'}`;
 
       try {
         const [statsRes, logsRes] = await Promise.all([
-          fetch('http://127.0.0.1:8005/api/audit/stats', { headers }),
-          fetch('http://127.0.0.1:8005/api/audit/logs', { headers }) // Admin sees all logs in a real app
+          fetch(`${baseUrl}/audit/stats`, { headers }),
+          fetch(`${baseUrl}/audit/logs`, { headers }) // Admin sees all logs in a real app
         ]);
 
         if (statsRes.status === 403) {
@@ -162,6 +163,5 @@ export default function SOCDashboard() {
         </div>
       </div>
     </div>
-  );
   );
 }

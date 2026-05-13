@@ -10,6 +10,9 @@ export default function DashboardPage() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [showCodes, setShowCodes] = useState(false);
 
+  // Define baseUrl at the component level so all functions can access it
+  const baseUrl = '/api';
+
   const fetchData = async () => {
     const token = localStorage.getItem('access_token');
     if (!token) {
@@ -21,18 +24,18 @@ export default function DashboardPage() {
       const headers = { 'Authorization': `Bearer ${token}` };
       
       // Fetch User Profile
-      const userRes = await fetch('http://127.0.0.1:8005/api/users/me', { headers });
+      const userRes = await fetch(`${baseUrl}/users/me`, { headers });
       if (!userRes.ok) throw new Error('Unauthorized');
       const userData = await userRes.json();
       setUser(userData);
 
       // Fetch Devices
-      const devicesRes = await fetch('http://127.0.0.1:8005/api/users/devices', { headers });
+      const devicesRes = await fetch(`${baseUrl}/users/devices`, { headers });
       const devicesData = await devicesRes.json();
       setDevices(devicesData);
 
       // Fetch Logs
-      const logsRes = await fetch('http://127.0.0.1:8005/api/audit/logs', { headers });
+      const logsRes = await fetch(`${baseUrl}/audit/logs`, { headers });
       const logsData = await logsRes.json();
       setLogs(logsData);
 
@@ -58,7 +61,7 @@ export default function DashboardPage() {
     try {
       const token = localStorage.getItem('access_token');
       // 1. Begin Step-Up
-      const beginRes = await fetch('http://127.0.0.1:8005/api/auth/step-up/begin', {
+      const beginRes = await fetch(`${baseUrl}/auth/step-up/begin`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -72,7 +75,7 @@ export default function DashboardPage() {
       if (!credential) return false;
 
       // 3. Complete Step-Up
-      const completeRes = await fetch('http://127.0.0.1:8005/api/auth/step-up/complete', {
+      const completeRes = await fetch(`${baseUrl}/auth/step-up/complete`, {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -93,7 +96,7 @@ export default function DashboardPage() {
     
     const performRevoke = async () => {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8005/api/users/devices/${deviceId}`, {
+      const res = await fetch(`${baseUrl}/users/devices/${deviceId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -120,7 +123,7 @@ export default function DashboardPage() {
 
     try {
       const token = localStorage.getItem('access_token');
-      const res = await fetch(`http://127.0.0.1:8005/api/users/devices/${deviceId}`, {
+      const res = await fetch(`${baseUrl}/users/devices/${deviceId}`, {
         method: 'PATCH',
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -143,7 +146,7 @@ export default function DashboardPage() {
       if (!username) return;
 
       // 1. Begin Registration
-      const beginRes = await fetch(`http://127.0.0.1:8005/api/auth/register/begin?username=${username}`, {
+      const beginRes = await fetch(`${baseUrl}/auth/register/begin?username=${username}`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -157,7 +160,7 @@ export default function DashboardPage() {
       const attestationResponse = prepareRegistrationResponse(credential);
 
       // 3. Complete Registration
-      const completeRes = await fetch(`http://127.0.0.1:8005/api/auth/register/complete?username=${username}`, {
+      const completeRes = await fetch(`${baseUrl}/auth/register/complete?username=${username}`, {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -169,7 +172,7 @@ export default function DashboardPage() {
       if (completeRes.ok) {
         alert('New device added successfully!');
         // Refresh device list
-        const devicesRes = await fetch('http://127.0.0.1:8005/api/users/devices', { 
+        const devicesRes = await fetch(`${baseUrl}/users/devices`, { 
           headers: { 'Authorization': `Bearer ${token}` } 
         });
         setDevices(await devicesRes.json());
@@ -183,7 +186,7 @@ export default function DashboardPage() {
   const handleGenerateCodes = async () => {
     const performGenerate = async () => {
       const token = localStorage.getItem('access_token');
-      const res = await fetch('http://127.0.0.1:8005/api/users/recovery/generate', {
+      const res = await fetch(`${baseUrl}/users/recovery/generate`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

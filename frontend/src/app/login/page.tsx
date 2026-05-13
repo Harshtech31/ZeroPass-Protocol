@@ -20,8 +20,9 @@ export default function LoginPage() {
     setMessage('Requesting challenge...');
 
     try {
+      const baseUrl = '/api';
       // 1. Get options from server
-      const beginRes = await fetch(`http://127.0.0.1:8005/api/auth/login/begin?username=${username}`, {
+      const beginRes = await fetch(`${baseUrl}/auth/login/begin?username=${username}`, {
         method: 'POST',
       });
       
@@ -43,7 +44,7 @@ export default function LoginPage() {
 
       // 3. Send response to server
       setMessage('Verifying signature...');
-      const completeRes = await fetch(`http://127.0.0.1:8005/api/auth/login/complete?username=${username}`, {
+      const completeRes = await fetch(`${baseUrl}/auth/login/complete?username=${username}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(prepareLoginResponse(credential)),
@@ -57,11 +58,21 @@ export default function LoginPage() {
       const result = await completeRes.json();
       localStorage.setItem('access_token', result.access_token);
 
+      // Fetch user role to determine redirect destination
+      const userRes = await fetch(`${baseUrl}/users/me`, {
+        headers: { 'Authorization': `Bearer ${result.access_token}` }
+      });
+      const userData = await userRes.json();
+
       setStatus('success');
       setMessage('Login successful! Redirecting...');
       
       setTimeout(() => {
-        window.location.href = '/dashboard';
+        if (userData.role === 'admin' || userData.role === 'analyst') {
+          window.location.href = '/admin/dashboard';
+        } else {
+          window.location.href = '/dashboard';
+        }
       }, 1500);
 
     } catch (err: any) {
@@ -85,7 +96,8 @@ export default function LoginPage() {
     setMessage('Verifying recovery code...');
 
     try {
-      const res = await fetch('http://127.0.0.1:8005/api/users/recovery/verify', {
+      const baseUrl = '/api';
+      const res = await fetch(`${baseUrl}/users/recovery/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, code: recoveryCode }),

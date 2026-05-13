@@ -259,7 +259,7 @@ async def login_complete(
             "status": "authenticated", 
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "token_type": "bearer"
+            "token_type": "bearer"  # nosec B105
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -291,7 +291,7 @@ async def refresh_token(refresh_token: str = Body(..., embed=True), db: Session 
     return {
         "access_token": new_access_token,
         "refresh_token": new_refresh_token,
-        "token_type": "bearer"
+        "token_type": "bearer"  # nosec B105
     }
 
 @router.post("/logout")

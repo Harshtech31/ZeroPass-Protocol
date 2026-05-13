@@ -111,7 +111,7 @@ async def use_recovery_code(
             "status": "authenticated", 
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "token_type": "bearer"
+            "token_type": "bearer"  # nosec B105
         }
     
     raise HTTPException(status_code=400, detail="Invalid recovery code")

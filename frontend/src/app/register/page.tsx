@@ -17,8 +17,9 @@ export default function RegisterPage() {
     setMessage('Requesting challenge...');
 
     try {
+      const baseUrl = '/api';
       // 1. Get options from server
-      const beginRes = await fetch(`http://127.0.0.1:8005/api/auth/register/begin?username=${username}`, {
+      const beginRes = await fetch(`${baseUrl}/auth/register/begin?username=${username}`, {
         method: 'POST',
       });
       
@@ -36,7 +37,7 @@ export default function RegisterPage() {
 
       // 3. Send response to server
       setMessage('Verifying credential...');
-      const completeRes = await fetch(`http://127.0.0.1:8005/api/auth/register/complete?username=${username}`, {
+      const completeRes = await fetch(`${baseUrl}/auth/register/complete?username=${username}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(prepareRegistrationResponse(credential)),
