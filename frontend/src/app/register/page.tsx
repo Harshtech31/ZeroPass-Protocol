@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { prepareRegistrationOptions, prepareRegistrationResponse } from '@/lib/webauthn';
 
@@ -8,6 +8,16 @@ export default function RegisterPage() {
   const [username, setUsername] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const [biometricsAvailable, setBiometricsAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.PublicKeyCredential && 
+        window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+      window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(result => {
+        setBiometricsAvailable(result);
+      });
+    }
+  }, []);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,6 +114,15 @@ export default function RegisterPage() {
                 disabled={status === 'loading'}
               />
             </div>
+
+            {biometricsAvailable && (
+              <div className="flex items-center space-x-2 px-1 animate-in fade-in slide-in-from-left-2 duration-500">
+                <div className="w-2 h-2 bg-[#7deded] rounded-full animate-pulse"></div>
+                <span className="text-[10px] font-black text-[#7deded] uppercase tracking-widest">
+                  Biometric Enclave Ready
+                </span>
+              </div>
+            )}
 
             <button
               type="submit"

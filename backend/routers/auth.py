@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Mapping
 from fastapi import APIRouter, Depends, HTTPException, Body, Request, status
 from fido2.server import Fido2Server
-from fido2.webauthn import PublicKeyCredentialRpEntity, AuthenticatorSelectionCriteria, UserVerificationRequirement, PublicKeyCredentialDescriptor
+from fido2.webauthn import PublicKeyCredentialRpEntity, AuthenticatorSelectionCriteria, UserVerificationRequirement, PublicKeyCredentialDescriptor, ResidentKeyRequirement
 from fido2.utils import websafe_decode, websafe_encode
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -54,10 +54,17 @@ async def register_begin(username: str, db: Session = Depends(get_db), redis = D
 
     credentials = db.scalars(select(WebAuthnCredential).where(WebAuthnCredential.user_id == user.id)).all()
     
+    # Configure authenticator selection to support biometrics (platform authenticators)
+    # resident_key=PREFERRED ensures browsers offer to create a "Passkey" which includes biometrics
+    authenticator_selection = AuthenticatorSelectionCriteria(
+        user_verification=UserVerificationRequirement.REQUIRED,
+        resident_key=ResidentKeyRequirement.PREFERRED
+    )
+
     options, state = server.register_begin(
         {"id": user.id.encode(), "name": user.username, "displayName": user.username},
         credentials=[PublicKeyCredentialDescriptor(type="public-key", id=websafe_decode(c.credential_id)) for c in credentials],
-        user_verification=UserVerificationRequirement.REQUIRED
+        authenticator_selection=authenticator_selection
     )
 
     redis.setex(f"webauthn_state:{user.id}", 300, json.dumps(state))
@@ -92,6 +99,7 @@ async def register_begin(username: str, db: Session = Depends(get_db), redis = D
         "authenticatorSelection": {
             "authenticatorAttachment": getattr(pk.authenticator_selection, "authenticator_attachment", None),
             "requireResidentKey": getattr(pk.authenticator_selection, "require_resident_key", False),
+            "residentKey": getattr(pk.authenticator_selection, "resident_key", None),
             "userVerification": getattr(pk.authenticator_selection, "user_verification", "required")
         } if pk.authenticator_selection else None,
         "attestation": getattr(pk, "attestation", "direct")
