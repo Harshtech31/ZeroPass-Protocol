@@ -1,6 +1,7 @@
 import json
 import base64
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Mapping
 from fastapi import APIRouter, Depends, HTTPException, Body, Request, status
@@ -16,6 +17,12 @@ from core.security import create_access_token, create_refresh_token, verify_toke
 from core.rate_limit import RateLimit
 from models.user import User, WebAuthnCredential, RefreshToken
 from services.audit import log_event
+import pyotp
+import qrcode
+import io
+from captcha.image import ImageCaptcha
+import random
+import string
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +46,94 @@ def bytes_to_base64(obj):
 
 from core.security import create_access_token, create_refresh_token, verify_token
 
+@router.post("/register/totp/setup")
+async def register_totp_setup(username: str, db: Session = Depends(get_db), redis = Depends(get_redis)):
+    """Generate TOTP secret and QR code for a new user."""
+    # Check if user already exists
+    user = db.scalar(select(User).where(User.username == username))
+    if user and user.is_totp_enabled:
+        raise HTTPException(status_code=400, detail="User already registered with TOTP")
+    
+    # Generate a temporary secret and store in Redis until verified
+    secret = pyotp.random_base32()
+    redis.setex(f"reg_totp_secret:{username}", 600, secret)
+    
+    totp = pyotp.TOTP(secret)
+    provisioning_uri = totp.provisioning_uri(name=username, issuer_name=settings.webauthn_rp_name)
+    
+    # Generate QR code image as base64
+    img = qrcode.make(provisioning_uri)
+    buf = io.BytesIO()
+    img.save(buf)
+    qr_base64 = base64.b64encode(buf.getvalue()).decode()
+    
+    return {
+        "secret": secret,
+        "qr_code": f"data:image/png;base64,{qr_base64}",
+        "provisioning_uri": provisioning_uri
+    }
+
+@router.post("/register/totp/verify")
+async def register_totp_verify(username: str, code: str = Body(..., embed=True), redis = Depends(get_redis)):
+    """Verify the first TOTP code to proceed with registration."""
+    secret = redis.get(f"reg_totp_secret:{username}")
+    if not secret:
+        raise HTTPException(status_code=400, detail="TOTP setup session expired or not started")
+    
+    totp = pyotp.TOTP(secret.decode() if isinstance(secret, bytes) else secret)
+    if totp.verify(code):
+        # Mark TOTP as verified in Redis for this session
+        redis.setex(f"reg_step_totp:{username}", 600, "verified")
+        return {"status": "success", "message": "TOTP verified"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+@router.get("/register/captcha/generate")
+async def register_captcha_generate(username: str, redis = Depends(get_redis)):
+    """Generate a captcha challenge."""
+    captcha_text = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    captcha_id = str(uuid.uuid4())
+    
+    # Store answer in Redis
+    redis.setex(f"captcha:{captcha_id}", 300, captcha_text)
+    
+    image = ImageCaptcha(width=280, height=90)
+    data = image.generate(captcha_text)
+    captcha_base64 = base64.b64encode(data.getvalue()).decode()
+    
+    return {
+        "captcha_id": captcha_id,
+        "captcha_image": f"data:image/png;base64,{captcha_base64}"
+    }
+
+@router.post("/register/captcha/verify")
+async def register_captcha_verify(
+    username: str, 
+    captcha_id: str = Body(...), 
+    answer: str = Body(...), 
+    redis = Depends(get_redis)
+):
+    """Verify captcha answer."""
+    stored_answer = redis.get(f"captcha:{captcha_id}")
+    if not stored_answer:
+        raise HTTPException(status_code=400, detail="Captcha expired or invalid")
+    
+    if stored_answer.upper() == answer.upper():
+        redis.setex(f"reg_step_captcha:{username}", 600, "verified")
+        redis.delete(f"captcha:{captcha_id}")
+        return {"status": "success", "message": "Captcha verified"}
+    else:
+        raise HTTPException(status_code=400, detail="Incorrect captcha answer")
+
 @router.post("/register/begin", dependencies=[Depends(RateLimit(3, 60))])
 async def register_begin(username: str, db: Session = Depends(get_db), redis = Depends(get_redis)):
     """Begin WebAuthn registration."""
+    # Enforce multi-step verification
+    if not redis.get(f"reg_step_totp:{username}"):
+        raise HTTPException(status_code=403, detail="Authenticator App verification required first")
+    if not redis.get(f"reg_step_captcha:{username}"):
+        raise HTTPException(status_code=403, detail="Captcha verification required first")
+
     user = db.scalar(select(User).where(User.username == username))
     if not user:
         user = User(
@@ -51,20 +143,21 @@ async def register_begin(username: str, db: Session = Depends(get_db), redis = D
         db.add(user)
         db.commit()
         db.refresh(user)
+    
+    # Save the TOTP secret to the user now that we are finalizing
+    totp_secret = redis.get(f"reg_totp_secret:{username}")
+    if totp_secret:
+        user.totp_secret = totp_secret.decode() if isinstance(totp_secret, bytes) else totp_secret
+        user.is_totp_enabled = True
+        db.commit()
 
     credentials = db.scalars(select(WebAuthnCredential).where(WebAuthnCredential.user_id == user.id)).all()
     
-    # Configure authenticator selection to support biometrics (platform authenticators)
-    # resident_key=PREFERRED ensures browsers offer to create a "Passkey" which includes biometrics
-    authenticator_selection = AuthenticatorSelectionCriteria(
-        user_verification=UserVerificationRequirement.REQUIRED,
-        resident_key=ResidentKeyRequirement.PREFERRED
-    )
-
     options, state = server.register_begin(
         {"id": user.id.encode(), "name": user.username, "displayName": user.username},
         credentials=[PublicKeyCredentialDescriptor(type="public-key", id=websafe_decode(c.credential_id)) for c in credentials],
-        authenticator_selection=authenticator_selection
+        user_verification=UserVerificationRequirement.REQUIRED,
+        resident_key_requirement=ResidentKeyRequirement.PREFERRED
     )
 
     redis.setex(f"webauthn_state:{user.id}", 300, json.dumps(state))
@@ -320,7 +413,8 @@ async def step_up_begin(user: User = Depends(get_current_user), db: Session = De
         raise HTTPException(status_code=400, detail="No devices registered")
 
     options, state = server.authenticate_begin(
-        credentials=[PublicKeyCredentialDescriptor(type="public-key", id=websafe_decode(c.credential_id)) for c in credentials_db]
+        credentials=[PublicKeyCredentialDescriptor(type="public-key", id=websafe_decode(c.credential_id)) for c in credentials_db],
+        user_verification=UserVerificationRequirement.REQUIRED
     )
     
     from db.redis import redis_client

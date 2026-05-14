@@ -19,6 +19,8 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER)
     passcode_hash: Mapped[str] = mapped_column(String, nullable=True)
     recovery_codes: Mapped[str] = mapped_column(String, nullable=True) # JSON list of hashed codes
+    totp_secret: Mapped[str] = mapped_column(String, nullable=True)
+    is_totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
