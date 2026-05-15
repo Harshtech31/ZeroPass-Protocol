@@ -1,0 +1,35 @@
+# Folders to ignore in all builds
+**/node_modules
+**/venv
+**/.venv
+**/.next
+**/build
+**/out
+**/.git
+**/.github
+**/.vscode
+**/.idea
+
+# Backend specific
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.coverage
+**/htmlcov
+
+# Frontend specific
+**/.vercel
+**/dist
+
+# C++ specific
+**/CMakeFiles
+**/cmake_install.cmake
+**/CMakeCache.txt
+**/Makefile
+
+# Logs and temps
+**/*.log
+**/tmp
+**/temp
