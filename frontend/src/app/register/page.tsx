@@ -17,8 +17,7 @@ export default function RegisterPage() {
   const [totpCode, setTotpCode] = useState('');
   
   // Captcha State
-  const [captchaData, setCaptchaData] = useState<{captcha_id: string, captcha_image: string} | null>(null);
-  const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [captchaData, setCaptchaData] = useState<{images: string[], instruction: string} | null>(null);
 
   const [biometricsAvailable, setBiometricsAvailable] = useState<boolean | null>(null);
 
@@ -79,7 +78,7 @@ export default function RegisterPage() {
         throw new Error(err.detail || 'Invalid TOTP code');
       }
       
-      // Step 2: Generate Captcha
+      // Step 2: Generate Custom Puzzle
       const capRes = await fetch(`/api/auth/register/captcha/generate?username=${username}`);
       const capData = await capRes.json();
       setCaptchaData(capData);
@@ -93,26 +92,22 @@ export default function RegisterPage() {
     }
   };
 
-  const handleCaptchaVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!captchaAnswer) return;
-    
+  const handleCaptchaSelect = async (index: number) => {
     setStatus('loading');
-    setMessage('Verifying human check...');
+    setMessage('Analyzing visual selection...');
     
     try {
       const res = await fetch(`/api/auth/register/captcha/verify?username=${username}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          captcha_id: captchaData?.captcha_id, 
-          answer: captchaAnswer 
+          index: index 
         })
       });
       
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || 'Incorrect captcha answer');
+        throw new Error(err.detail || 'Visual mismatch detected');
       }
       
       setStep('hardware');
@@ -121,11 +116,10 @@ export default function RegisterPage() {
     } catch (err: any) {
       setStatus('error');
       setMessage(err.message);
-      // Refresh captcha on failure
+      // Refresh puzzle on failure
       const capRes = await fetch(`/api/auth/register/captcha/generate?username=${username}`);
       const capData = await capRes.json();
       setCaptchaData(capData);
-      setCaptchaAnswer('');
     }
   };
 
@@ -282,29 +276,41 @@ export default function RegisterPage() {
             )}
 
             {step === 'captcha' && captchaData && (
-              <form onSubmit={handleCaptchaVerify} className="space-y-6">
-                <div className="flex justify-center mb-6 overflow-hidden rounded-[20px] border border-white/5">
-                  <img src={captchaData.captcha_image} alt="Captcha" className="w-full h-auto" />
+              <div className="space-y-6">
+                <div className="text-center mb-4">
+                  <p className="text-[10px] font-black text-[#7deded] uppercase tracking-[0.2em] animate-pulse">
+                    {captchaData.instruction}
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black text-[#686e78] uppercase tracking-[0.2em] mb-3 ml-1">Enter Characters</label>
-                  <input
-                    type="text"
-                    value={captchaAnswer}
-                    onChange={(e) => setCaptchaAnswer(e.target.value)}
-                    className="w-full bg-[#0a101a]/50 border border-white/5 rounded-[16px] px-5 py-4 text-[#f8fafc] text-center text-xl tracking-[0.2em] focus:outline-none focus:ring-2 focus:ring-[#7deded]/20 transition-all font-black uppercase"
-                    placeholder="Captcha Text"
-                    required
-                  />
+                <div className="grid grid-cols-3 gap-3 p-2 bg-[#0a101a]/30 border border-white/5 rounded-[24px]">
+                  {captchaData.images.map((img, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleCaptchaSelect(idx)}
+                      disabled={status === 'loading'}
+                      className="relative aspect-square rounded-[16px] overflow-hidden border border-white/5 hover:border-[#7deded]/50 hover:scale-[1.05] transition-all group"
+                    >
+                      <img src={img} alt={`Puzzle ${idx}`} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-[#7deded]/0 group-hover:bg-[#7deded]/10 transition-colors" />
+                      <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="w-2 h-2 bg-[#7deded] rounded-full shadow-[0_0_8px_#7deded]" />
+                      </div>
+                    </button>
+                  ))}
                 </div>
-                <button
-                  type="submit"
-                  disabled={status === 'loading'}
-                  className="w-full bg-[#7deded] hover:bg-[#7deded]/90 text-[#0a101a] font-black py-4 rounded-[16px] uppercase tracking-widest text-[11px]"
-                >
-                  {status === 'loading' ? 'Checking...' : 'Confirm Human'}
-                </button>
-              </form>
+                <div className="text-center">
+                  <button 
+                    onClick={async () => {
+                      const capRes = await fetch(`/api/auth/register/captcha/generate?username=${username}`);
+                      const capData = await capRes.json();
+                      setCaptchaData(capData);
+                    }}
+                    className="text-[10px] font-bold text-[#686e78] hover:text-[#7deded] uppercase tracking-widest transition-colors"
+                  >
+                    Generate New Challenge
+                  </button>
+                </div>
+              </div>
             )}
 
             {step === 'hardware' && (

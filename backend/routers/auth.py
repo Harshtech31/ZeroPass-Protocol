@@ -20,9 +20,10 @@ from services.audit import log_event
 import pyotp
 import qrcode
 import io
-from captcha.image import ImageCaptcha
 import random
-import string
+import os
+import base64
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -90,40 +91,64 @@ async def register_totp_verify(username: str, code: str = Body(..., embed=True),
 
 @router.get("/register/captcha/generate")
 async def register_captcha_generate(username: str, redis = Depends(get_redis)):
-    """Generate a captcha challenge."""
-    captcha_text = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    captcha_id = str(uuid.uuid4())
+    """
+    Generates a custom 'Odd One Out' visual puzzle.
+    """
+    asset_dir = "backend/assets/captcha"
+    if not os.path.exists(asset_dir):
+        raise HTTPException(status_code=500, detail="Captcha assets missing")
     
-    # Store answer in Redis
-    redis.setex(f"captcha:{captcha_id}", 300, captcha_text)
+    sets = [d for d in os.listdir(asset_dir) if os.path.isdir(os.path.join(asset_dir, d))]
+    if not sets:
+        raise HTTPException(status_code=500, detail="No captcha sets found")
     
-    image = ImageCaptcha(width=280, height=90)
-    data = image.generate(captcha_text)
-    captcha_base64 = base64.b64encode(data.getvalue()).decode()
+    selected_set = random.choice(sets)
+    set_path = os.path.join(asset_dir, selected_set)
+    
+    with open(os.path.join(set_path, "normal.png"), "rb") as f:
+        normal_b64 = f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+    with open(os.path.join(set_path, "odd.png"), "rb") as f:
+        odd_b64 = f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+
+    images = [normal_b64] * 5
+    images.append(odd_b64)
+    
+    indices = list(range(6))
+    random.shuffle(indices)
+    
+    shuffled_images = []
+    correct_index = -1
+    for i, original_pos in enumerate(indices):
+        shuffled_images.append(images[original_pos])
+        if original_pos == 5:
+            correct_index = i
+            
+    redis.setex(f"reg_captcha_answer:{username}", 300, str(correct_index))
     
     return {
-        "captcha_id": captcha_id,
-        "captcha_image": f"data:image/png;base64,{captcha_base64}"
+        "images": shuffled_images,
+        "instruction": "Select the visual anomaly (the odd one out) to continue"
     }
 
 @router.post("/register/captcha/verify")
-async def register_captcha_verify(
-    username: str, 
-    captcha_id: str = Body(...), 
-    answer: str = Body(...), 
-    redis = Depends(get_redis)
-):
-    """Verify captcha answer."""
-    stored_answer = redis.get(f"captcha:{captcha_id}")
-    if not stored_answer:
-        raise HTTPException(status_code=400, detail="Captcha expired or invalid")
-    
-    if stored_answer.upper() == answer.upper():
+async def register_captcha_verify(username: str, data: dict, redis = Depends(get_redis)):
+    """
+    Verifies the index of the selected image.
+    """
+    user_index = data.get("index")
+    if user_index is None:
+        raise HTTPException(status_code=400, detail="No index provided")
+        
+    correct_index = redis.get(f"reg_captcha_answer:{username}")
+    if not correct_index:
+        raise HTTPException(status_code=400, detail="Captcha expired or not generated")
+        
+    if str(user_index) == correct_index.decode():
         redis.setex(f"reg_step_captcha:{username}", 600, "verified")
-        redis.delete(f"captcha:{captcha_id}")
-        return {"status": "success", "message": "Captcha verified"}
+        redis.delete(f"reg_captcha_answer:{username}")
+        return {"status": "success"}
     else:
-        raise HTTPException(status_code=400, detail="Incorrect captcha answer")
+        raise HTTPException(status_code=400, detail="Visual mismatch detected")
 
 @router.post("/register/begin", dependencies=[Depends(RateLimit(3, 60))])
 async def register_begin(username: str, db: Session = Depends(get_db), redis = Depends(get_redis)):
