@@ -74,13 +74,15 @@ async def get_system_health(
     try:
         db.execute(select(1))
         health["database"] = "healthy"
-    except: pass
+    except Exception:  # nosec: B110
+        pass
 
     # 2. Check Redis
     try:
         if redis.ping():
             health["redis"] = "healthy"
-    except: pass
+    except Exception:  # nosec: B110
+        pass
 
     # 3. Check C++ Engine (Mocked check for now, can be expanded to gRPC ping)
     health["engine"] = "healthy" # Assume healthy if backend is up for now

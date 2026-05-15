@@ -32,8 +32,10 @@ async def test_captcha_flow():
     set_path = os.path.join(asset_dir, selected_set)
     
     # Verify images exist
-    assert os.path.exists(os.path.join(set_path, "normal.png"))
-    assert os.path.exists(os.path.join(set_path, "odd.png"))
+    if not os.path.exists(os.path.join(set_path, "normal.png")):
+        raise RuntimeError("normal.png missing")
+    if not os.path.exists(os.path.join(set_path, "odd.png")):
+        raise RuntimeError("odd.png missing")
     print(f"Using set: {selected_set}")
 
     # (Logic from generate endpoint)
@@ -45,9 +47,9 @@ async def test_captcha_flow():
     images = [normal_b64] * 5
     images.append(odd_b64)
     
-    import random
+    import secrets
     indices = list(range(6))
-    random.shuffle(indices)
+    secrets.SystemRandom().shuffle(indices)
     
     odd_index = -1
     for i, original_pos in enumerate(indices):
@@ -59,12 +61,14 @@ async def test_captcha_flow():
 
     # 2. Verify Success
     stored_index = redis.get(f"reg_captcha_answer:{username}")
-    assert stored_index.decode() == str(odd_index)
+    if stored_index.decode() != str(odd_index):
+        raise RuntimeError("Verification logic failed")
     print("Verification Success: Index matches.")
 
     # 3. Verify Failure
     wrong_index = (odd_index + 1) % 6
-    assert str(wrong_index) != stored_index.decode()
+    if str(wrong_index) == stored_index.decode():
+        raise RuntimeError("Failure logic failed")
     print(f"Verification Failure: Wrong index {wrong_index} correctly identified.")
 
 if __name__ == "__main__":

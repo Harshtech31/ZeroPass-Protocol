@@ -20,7 +20,7 @@ from services.audit import log_event
 import pyotp
 import qrcode
 import io
-import random
+import secrets
 import os
 import base64
 from fastapi.responses import JSONResponse
@@ -110,7 +110,7 @@ async def captcha_generate(username: str, redis = Depends(get_redis)):
     if not sets:
         raise HTTPException(status_code=500, detail="No captcha sets found")
     
-    selected_set = random.choice(sets)
+    selected_set = secrets.choice(sets)
     set_path = os.path.join(asset_dir, selected_set)
     
     with open(os.path.join(set_path, "normal.png"), "rb") as f:
