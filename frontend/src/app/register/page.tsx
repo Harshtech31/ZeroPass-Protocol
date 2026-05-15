@@ -79,7 +79,7 @@ export default function RegisterPage() {
       }
       
       // Step 2: Generate Custom Puzzle
-      const capRes = await fetch(`/api/auth/register/captcha/generate?username=${username}`);
+      const capRes = await fetch(`/api/auth/captcha/generate?username=${username}`);
       const capData = await capRes.json();
       setCaptchaData(capData);
       
@@ -97,11 +97,12 @@ export default function RegisterPage() {
     setMessage('Analyzing visual selection...');
     
     try {
-      const res = await fetch(`/api/auth/register/captcha/verify?username=${username}`, {
+      const res = await fetch(`/api/auth/captcha/verify?username=${username}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          index: index 
+          index: index,
+          flow: 'reg' 
         })
       });
       
@@ -117,7 +118,7 @@ export default function RegisterPage() {
       setStatus('error');
       setMessage(err.message);
       // Refresh puzzle on failure
-      const capRes = await fetch(`/api/auth/register/captcha/generate?username=${username}`);
+      const capRes = await fetch(`/api/auth/captcha/generate?username=${username}`);
       const capData = await capRes.json();
       setCaptchaData(capData);
     }
@@ -301,7 +302,7 @@ export default function RegisterPage() {
                 <div className="text-center">
                   <button 
                     onClick={async () => {
-                      const capRes = await fetch(`/api/auth/register/captcha/generate?username=${username}`);
+                      const capRes = await fetch(`/api/auth/captcha/generate?username=${username}`);
                       const capData = await capRes.json();
                       setCaptchaData(capData);
                     }}
