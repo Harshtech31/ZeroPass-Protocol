@@ -7,6 +7,7 @@ export default function SOCDashboard() {
   const [stats, setStats] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [health, setHealth] = useState<any>(null);
   const [isLockdown, setIsLockdown] = useState(false);
   const [selectedLog, setSelectedLog] = useState<string | null>(null);
   const [isPromoting, setIsPromoting] = useState<string | null>(null);
@@ -17,15 +18,17 @@ export default function SOCDashboard() {
     const headers = { 'Authorization': `Bearer ${token}` };
 
     try {
-      const [statsRes, logsRes, usersRes] = await Promise.all([
+      const [statsRes, logsRes, usersRes, healthRes] = await Promise.all([
         fetch(`${baseUrl}/audit/stats`, { headers }),
         fetch(`${baseUrl}/audit/logs?limit=50`, { headers }),
-        fetch(`${baseUrl}/admin/users`, { headers })
+        fetch(`${baseUrl}/admin/users`, { headers }),
+        fetch(`${baseUrl}/admin/health`, { headers })
       ]);
 
       if (statsRes.ok) setStats(await statsRes.json());
       if (logsRes.ok) setLogs(await logsRes.json());
       if (usersRes.ok) setUsers(await usersRes.json());
+      if (healthRes.ok) setHealth(await healthRes.json());
     } catch (err) {
       console.error('SOC Fetch Error:', err);
     }
@@ -102,12 +105,35 @@ export default function SOCDashboard() {
     }
   };
 
-  const handleLockdown = () => {
-    if (confirm('WARNING: Initializing Secure Lockdown will terminate all non-admin sessions. Proceed?')) {
-      setIsLockdown(true);
-      setTimeout(() => {
-        alert('CRITICAL: Global Secure Lockdown Initialized. Protocol set to read-only.');
-      }, 500);
+  const handleLockdown = async () => {
+    const newState = !isLockdown;
+    const action = newState ? 'INITIALIZE Secure Lockdown' : 'DEACTIVATE Secure Lockdown';
+    
+    if (confirm(`WARNING: ${action} will require hardware verification. Proceed?`)) {
+      const verified = await triggerStepUp();
+      if (!verified) {
+        alert('Verification failed. Action cancelled.');
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('access_token');
+        const res = await fetch(`${baseUrl}/admin/lockdown`, {
+          method: 'POST',
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ enabled: newState })
+        });
+
+        if (res.ok) {
+          setIsLockdown(newState);
+          alert(`SYSTEM ALERT: Global Lockdown ${newState ? 'INITIALIZED' : 'DEACTIVATED'}.`);
+        }
+      } catch (err) {
+        console.error('Lockdown toggle failed:', err);
+      }
     }
   };
 
@@ -182,6 +208,31 @@ export default function SOCDashboard() {
               <p className={`text-5xl font-black tracking-tighter ${s.color}`}>{s.val}</p>
             </div>
           ))}
+        </div>
+
+        {/* System Infrastructure Health */}
+        <div className="mb-12 bento-card p-8 bg-black/40 backdrop-blur-xl">
+           <div className="flex justify-between items-center mb-8">
+              <h2 className="text-xl font-black tracking-tight uppercase">Infrastructure Health</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-widest text-[#686e78]">Last Pulse: {health?.timestamp ? new Date(health.timestamp * 1000).toLocaleTimeString() : '---'}</span>
+              </div>
+           </div>
+           <div className="grid grid-cols-3 gap-6">
+              {[
+                { name: 'PostgreSQL Instance', status: health?.database, desc: 'Primary Persistence Layer' },
+                { name: 'Redis Cache', status: health?.redis, desc: 'Session & Lockdown State' },
+                { name: 'C++ Security Engine', status: health?.engine, desc: 'Advanced Cryptographic Core' },
+              ].map((item, i) => (
+                <div key={i} className="flex items-center gap-4 p-4 bg-[#0a101a]/40 rounded-2xl border border-white/5">
+                  <div className={`w-3 h-3 rounded-full ${item.status === 'healthy' ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-pulse'}`}></div>
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-tight">{item.name}</p>
+                    <p className="text-[9px] font-bold text-[#686e78]">{item.desc} • <span className={item.status === 'healthy' ? 'text-green-500' : 'text-red-500'}>{item.status?.toUpperCase() || 'OFFLINE'}</span></p>
+                  </div>
+                </div>
+              ))}
+           </div>
         </div>
 
         {/* Main Sections */}

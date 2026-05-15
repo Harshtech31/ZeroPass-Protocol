@@ -32,6 +32,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 rp = PublicKeyCredentialRpEntity(id=settings.webauthn_rp_id, name=settings.webauthn_rp_name)
 server = Fido2Server(rp)
 
+async def check_lockdown(redis = Depends(get_redis)):
+    lockdown = redis.get("system_lockdown")
+    if lockdown and (lockdown.decode() if hasattr(lockdown, "decode") else lockdown) == "true":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+            detail="System is currently in Secure Lockdown. New registrations and modifications are suspended."
+        )
+
 def bytes_to_base64(obj):
     if isinstance(obj, bytes):
         return websafe_encode(obj)
@@ -182,7 +190,7 @@ async def captcha_verify(username: str, data: dict, db: Session = Depends(get_db
     else:
         raise HTTPException(status_code=400, detail="Visual mismatch detected")
 
-@router.post("/register/begin", dependencies=[Depends(RateLimit(3, 60))])
+@router.post("/register/begin", dependencies=[Depends(RateLimit(3, 60)), Depends(check_lockdown)])
 async def register_begin(username: str, db: Session = Depends(get_db), redis = Depends(get_redis)):
     """Begin WebAuthn registration."""
     # Enforce multi-step verification
