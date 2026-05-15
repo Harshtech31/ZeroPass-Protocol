@@ -31,3 +31,9 @@ cpp-security-engine/build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.pem

@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - zeropass_net
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    networks:
+      - zeropass_net
+
+  cpp-engine:
+    build:
+      context: ./cpp-security-engine
+      dockerfile: ../docker/cpp-engine.Dockerfile
+    restart: always
+    networks:
+      - zeropass_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend.Dockerfile
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SECURITY_ENGINE_URL: cpp-engine:50051
+      WEBAUTHN_RP_ID: zeropass.dev
+      WEBAUTHN_RP_NAME: "ZeroPass Protocol"
+      WEBAUTHN_ORIGIN: https://zeropass.dev
+    depends_on:
+      - db
+      - redis
+      - cpp-engine
+    networks:
+      - zeropass_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend.Dockerfile
+    restart: always
+    environment:
+      NEXT_PUBLIC_API_URL: https://zeropass.dev/api
+    networks:
+      - zeropass_net
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - zeropass_net
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - zeropass_net
+
+networks:
+  zeropass_net:
+    driver: bridge
+
+volumes:
+  postgres_data:

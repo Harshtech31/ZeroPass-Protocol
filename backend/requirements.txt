@@ -13,3 +13,6 @@ python-json-logger
 grpcio
 grpcio-tools
 prometheus-fastapi-instrumentator
+pyotp
+qrcode
+Pillow

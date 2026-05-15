@@ -1,20 +1,132 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { prepareRegistrationOptions, prepareRegistrationResponse } from '@/lib/webauthn';
 
+type Step = 'identifier' | 'totp' | 'captcha' | 'hardware' | 'success';
+
 export default function RegisterPage() {
+  const [step, setStep] = useState<Step>('identifier');
   const [username, setUsername] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  
+  // TOTP State
+  const [totpData, setTotpData] = useState<{qr_code: string, secret: string} | null>(null);
+  const [totpCode, setTotpCode] = useState('');
+  
+  // Captcha State
+  const [captchaData, setCaptchaData] = useState<{images: string[], instruction: string} | null>(null);
 
-  const handleRegister = async (e: React.FormEvent) => {
+  const [biometricsAvailable, setBiometricsAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.PublicKeyCredential && 
+        window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+      window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(result => {
+        setBiometricsAvailable(result);
+      });
+    }
+  }, []);
+
+  const handleIdentifierSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username) return;
-
+    
     setStatus('loading');
-    setMessage('Requesting challenge...');
+    setMessage('Checking identifier...');
+    
+    try {
+      // Step 1: Setup TOTP
+      const res = await fetch(`/api/auth/register/totp/setup?username=${username}`, {
+        method: 'POST'
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to initiate TOTP setup');
+      }
+      
+      const data = await res.json();
+      setTotpData(data);
+      setStep('totp');
+      setStatus('idle');
+      setMessage('');
+    } catch (err: any) {
+      setStatus('error');
+      setMessage(err.message);
+    }
+  };
+
+  const handleTotpVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!totpCode) return;
+    
+    setStatus('loading');
+    setMessage('Verifying authenticator code...');
+    
+    try {
+      const res = await fetch(`/api/auth/register/totp/verify?username=${username}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: totpCode })
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Invalid TOTP code');
+      }
+      
+      // Step 2: Generate Custom Puzzle
+      const capRes = await fetch(`/api/auth/captcha/generate?username=${username}`);
+      const capData = await capRes.json();
+      setCaptchaData(capData);
+      
+      setStep('captcha');
+      setStatus('idle');
+      setMessage('');
+    } catch (err: any) {
+      setStatus('error');
+      setMessage(err.message);
+    }
+  };
+
+  const handleCaptchaSelect = async (index: number) => {
+    setStatus('loading');
+    setMessage('Analyzing visual selection...');
+    
+    try {
+      const res = await fetch(`/api/auth/captcha/verify?username=${username}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          index: index,
+          flow: 'reg' 
+        })
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Visual mismatch detected');
+      }
+      
+      setStep('hardware');
+      setStatus('idle');
+      setMessage('');
+    } catch (err: any) {
+      setStatus('error');
+      setMessage(err.message);
+      // Refresh puzzle on failure
+      const capRes = await fetch(`/api/auth/captcha/generate?username=${username}`);
+      const capData = await capRes.json();
+      setCaptchaData(capData);
+    }
+  };
+
+  const handleHardwareRegister = async () => {
+    setStatus('loading');
+    setMessage('Requesting hardware handshake...');
 
     try {
       const baseUrl = '/api';
@@ -23,7 +135,10 @@ export default function RegisterPage() {
         method: 'POST',
       });
       
-      if (!beginRes.ok) throw new Error('Failed to begin registration');
+      if (!beginRes.ok) {
+        const err = await beginRes.json();
+        throw new Error(err.detail || 'Failed to begin registration');
+      }
       const responseData = await beginRes.json();
       const options = responseData.publicKey || responseData;
 
@@ -36,7 +151,7 @@ export default function RegisterPage() {
       if (!credential) throw new Error('Credential creation failed');
 
       // 3. Send response to server
-      setMessage('Verifying credential...');
+      setMessage('Finalizing protocol identity...');
       const completeRes = await fetch(`${baseUrl}/auth/register/complete?username=${username}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -48,8 +163,9 @@ export default function RegisterPage() {
         throw new Error(err.detail || 'Verification failed');
       }
 
+      setStep('success');
       setStatus('success');
-      setMessage('Registration complete! You can now log in.');
+      setMessage('Registration complete! Your identity is now secured by multiple factors.');
     } catch (err: any) {
       console.error(err);
       setStatus('error');
@@ -66,7 +182,10 @@ export default function RegisterPage() {
       <div className="absolute top-10 left-10 font-mono text-[10px] text-[#253754] opacity-20 pointer-events-none hidden lg:block">
         <p>➜ zeropass --initialize</p>
         <p>[SYSTEM] Checking hardware compatibility...</p>
-        <p>[AUTH] Preparing secure enclave...</p>
+        <p>[AUTH] Step 1/4: Identifier check...</p>
+        {step !== 'identifier' && <p>[AUTH] Step 2/4: TOTP Secret Handshake...</p>}
+        {(step === 'captcha' || step === 'hardware' || step === 'success') && <p>[AUTH] Step 3/4: Human verification...</p>}
+        {(step === 'hardware' || step === 'success') && <p>[AUTH] Step 4/4: Secure Enclave Finalization...</p>}
       </div>
 
       <div className="relative z-10 w-full max-w-md">
@@ -77,87 +196,177 @@ export default function RegisterPage() {
           <div className="relative z-10 text-center mb-10">
             <div className="inline-flex items-center justify-center w-20 h-20 bg-[#253754]/40 rounded-[20px] border border-white/10 mb-6 shadow-inner">
               <svg className="w-10 h-10 text-[#7deded]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                {step === 'identifier' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />}
+                {step === 'totp' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />}
+                {step === 'captcha' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />}
+                {step === 'hardware' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />}
+                {step === 'success' && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />}
               </svg>
             </div>
             <h1 className="text-4xl font-black text-[#f8fafc] tracking-tighter mb-3 uppercase">
-              Initialize
+              {step === 'identifier' && 'Initialize'}
+              {step === 'totp' && '2FA Setup'}
+              {step === 'captcha' && 'Security'}
+              {step === 'hardware' && 'Handshake'}
+              {step === 'success' && 'Secured'}
             </h1>
             <p className="text-[#686e78] font-medium px-4 leading-relaxed">
-              Create your hardware-backed secure protocol identity
+              {step === 'identifier' && 'Choose your protocol identifier to begin'}
+              {step === 'totp' && 'Scan the QR code with your Authenticator App'}
+              {step === 'captcha' && 'Confirm you are a human operator'}
+              {step === 'hardware' && 'Finalize with your biometric or hardware key'}
+              {step === 'success' && 'Your multi-factor protocol identity is active'}
             </p>
           </div>
 
-          <form onSubmit={handleRegister} className="space-y-6 relative z-10">
-            <div>
-              <label htmlFor="username" className="block text-[10px] font-black text-[#686e78] uppercase tracking-[0.2em] mb-3 ml-1">
-                Choose Identifier
-              </label>
-              <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-[#0a101a]/50 border border-white/5 rounded-[16px] px-5 py-4 text-[#f8fafc] placeholder:text-[#253754] focus:outline-none focus:ring-2 focus:ring-[#7deded]/20 focus:border-[#7deded]/20 transition-all font-bold"
-                placeholder="Unique username"
-                required
-                disabled={status === 'loading'}
-              />
-            </div>
+          <div className="relative z-10">
+            {step === 'identifier' && (
+              <form onSubmit={handleIdentifierSubmit} className="space-y-6">
+                <div>
+                  <label className="block text-[10px] font-black text-[#686e78] uppercase tracking-[0.2em] mb-3 ml-1">Identifier</label>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-[#0a101a]/50 border border-white/5 rounded-[16px] px-5 py-4 text-[#f8fafc] placeholder:text-[#253754] focus:outline-none focus:ring-2 focus:ring-[#7deded]/20 transition-all font-bold"
+                    placeholder="Unique username"
+                    required
+                    disabled={status === 'loading'}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={status === 'loading'}
+                  className="w-full bg-[#7deded] hover:bg-[#7deded]/90 text-[#0a101a] font-black py-4 rounded-[16px] shadow-xl shadow-[#7deded]/10 transition-all uppercase tracking-widest text-[11px]"
+                >
+                  {status === 'loading' ? 'Checking...' : 'Next Step'}
+                </button>
+              </form>
+            )}
 
-            <button
-              type="submit"
-              disabled={status === 'loading'}
-              className="w-full bg-[#7deded] hover:bg-[#7deded]/90 disabled:bg-[#253754] text-[#0a101a] font-black py-4 rounded-[16px] shadow-xl shadow-[#7deded]/10 transition-all active:scale-[0.98] flex items-center justify-center group/btn"
-            >
-              {status === 'loading' ? (
-                <div className="w-6 h-6 border-3 border-[#0a101a]/30 border-t-[#0a101a] rounded-full animate-spin"></div>
-              ) : (
-                <span className="flex items-center uppercase tracking-widest text-[11px]">
-                  Register Hardware
-                  <svg className="w-4 h-4 ml-2 group-hover/btn:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
-                  </svg>
-                </span>
-              )}
-            </button>
+            {step === 'totp' && totpData && (
+              <form onSubmit={handleTotpVerify} className="space-y-6">
+                <div className="flex justify-center p-6 bg-white rounded-[24px] mb-6 shadow-2xl shadow-black/50">
+                  <img src={totpData.qr_code} alt="QR Code" className="w-48 h-48" />
+                </div>
+                <div className="text-center mb-6">
+                  <code className="text-[10px] text-[#7deded] bg-[#7deded]/10 px-3 py-1 rounded-full font-bold">
+                    Secret: {totpData.secret.match(/.{1,4}/g)?.join(' ')}
+                  </code>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-[#686e78] uppercase tracking-[0.2em] mb-3 ml-1">6-Digit Code</label>
+                  <input
+                    type="text"
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value)}
+                    maxLength={6}
+                    className="w-full bg-[#0a101a]/50 border border-white/5 rounded-[16px] px-5 py-4 text-[#f8fafc] text-center text-2xl tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-[#7deded]/20 transition-all font-black"
+                    placeholder="000000"
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={status === 'loading'}
+                  className="w-full bg-[#7deded] hover:bg-[#7deded]/90 text-[#0a101a] font-black py-4 rounded-[16px] uppercase tracking-widest text-[11px]"
+                >
+                  {status === 'loading' ? 'Verifying...' : 'Verify Authenticator'}
+                </button>
+              </form>
+            )}
 
-            {message && (
-              <div className={`p-4 rounded-[16px] text-center text-[10px] font-black uppercase tracking-widest ${
+            {step === 'captcha' && captchaData && (
+              <div className="space-y-6">
+                <div className="text-center mb-4">
+                  <p className="text-[10px] font-black text-[#7deded] uppercase tracking-[0.2em] animate-pulse">
+                    {captchaData.instruction}
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-3 p-2 bg-[#0a101a]/30 border border-white/5 rounded-[24px]">
+                  {captchaData.images.map((img, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleCaptchaSelect(idx)}
+                      disabled={status === 'loading'}
+                      className="relative aspect-square rounded-[16px] overflow-hidden border border-white/5 hover:border-[#7deded]/50 hover:scale-[1.05] transition-all group"
+                    >
+                      <img src={img} alt={`Puzzle ${idx}`} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-[#7deded]/0 group-hover:bg-[#7deded]/10 transition-colors" />
+                      <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="w-2 h-2 bg-[#7deded] rounded-full shadow-[0_0_8px_#7deded]" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="text-center">
+                  <button 
+                    onClick={async () => {
+                      const capRes = await fetch(`/api/auth/captcha/generate?username=${username}`);
+                      const capData = await capRes.json();
+                      setCaptchaData(capData);
+                    }}
+                    className="text-[10px] font-bold text-[#686e78] hover:text-[#7deded] uppercase tracking-widest transition-colors"
+                  >
+                    Generate New Challenge
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {step === 'hardware' && (
+              <div className="space-y-6">
+                <div className="p-8 bg-[#253754]/20 border border-[#7deded]/20 rounded-[24px] text-center">
+                  <div className="w-16 h-16 bg-[#7deded]/10 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                    <svg className="w-8 h-8 text-[#7deded]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A10.003 10.003 0 0012 3a10.003 10.003 0 00-6.912 2.744m10.272 14.512l.054.09A10.003 10.003 0 0021 11a10.003 10.003 0 00-2.256-6.323" />
+                    </svg>
+                  </div>
+                  <p className="text-sm font-bold text-[#7deded] uppercase tracking-widest mb-2">Final Step</p>
+                  <p className="text-xs text-[#686e78] font-medium px-4">Register your hardware key or biometric to complete the protocol initialization.</p>
+                </div>
+                <button
+                  onClick={handleHardwareRegister}
+                  disabled={status === 'loading'}
+                  className="w-full bg-[#7deded] hover:bg-[#7deded]/90 text-[#0a101a] font-black py-4 rounded-[16px] shadow-xl shadow-[#7deded]/10 transition-all uppercase tracking-widest text-[11px]"
+                >
+                  {status === 'loading' ? 'Finalizing...' : 'Register Hardware'}
+                </button>
+              </div>
+            )}
+
+            {step === 'success' && (
+              <div className="space-y-6 text-center">
+                <div className="p-6 bg-green-500/10 border border-green-500/20 rounded-[24px] mb-8">
+                  <p className="text-sm text-green-400 font-bold leading-relaxed">
+                    Identity Successfully Initialized. Your account is now protected by WebAuthn and TOTP.
+                  </p>
+                </div>
+                <Link 
+                  href="/login" 
+                  className="block w-full bg-[#f8fafc] text-[#0a101a] font-black py-4 rounded-[16px] uppercase tracking-widest text-[11px] transition-all hover:scale-[1.02]"
+                >
+                  Proceed to Login
+                </Link>
+              </div>
+            )}
+
+            {message && status !== 'success' && (
+              <div className={`mt-6 p-4 rounded-[16px] text-center text-[10px] font-black uppercase tracking-widest ${
                 status === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 
-                status === 'success' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
                 'bg-[#7deded]/10 text-[#7deded] border border-[#7deded]/20'
               }`}>
                 {message}
               </div>
             )}
+          </div>
 
-            <div className="flex flex-col space-y-4 pt-4">
-              {status === 'success' && (
-                <Link 
-                  href="/login" 
-                  className="w-full py-4 bg-[#f8fafc] text-[#0a101a] text-center rounded-[16px] text-[11px] font-black uppercase tracking-widest transition-all hover:bg-white"
-                >
-                  Proceed to Identity Verification
-                </Link>
-              )}
-              
-              <div className="h-px bg-white/5 w-full"></div>
-              
-              <p className="text-center text-sm text-[#686e78] font-medium">
-                Already registered?{' '}
-                <Link href="/login" className="text-[#7deded] hover:underline font-bold underline-offset-4">
-                  Sign In
-                </Link>
-              </p>
-            </div>
-          </form>
+          <div className="mt-10 text-center">
+            <Link href="/login" className="text-sm text-[#686e78] hover:text-[#7deded] transition-colors font-medium">
+              Already have an account? <span className="font-black underline underline-offset-4 decoration-[#7deded]/30">Identify</span>
+            </Link>
+          </div>
         </div>
-        
-        {/* Security Footer Note */}
-        <p className="mt-8 text-center text-[10px] font-bold text-[#686e78] uppercase tracking-widest">
-          FIDO2 / WebAuthn Standard Compliance Active
-        </p>
       </div>
     </div>
   );

@@ -1,11 +1,12 @@
 import json
 import base64
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Mapping
 from fastapi import APIRouter, Depends, HTTPException, Body, Request, status
 from fido2.server import Fido2Server
-from fido2.webauthn import PublicKeyCredentialRpEntity, AuthenticatorSelectionCriteria, UserVerificationRequirement, PublicKeyCredentialDescriptor
+from fido2.webauthn import PublicKeyCredentialRpEntity, AuthenticatorSelectionCriteria, UserVerificationRequirement, PublicKeyCredentialDescriptor, ResidentKeyRequirement
 from fido2.utils import websafe_decode, websafe_encode
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -16,6 +17,13 @@ from core.security import create_access_token, create_refresh_token, verify_toke
 from core.rate_limit import RateLimit
 from models.user import User, WebAuthnCredential, RefreshToken
 from services.audit import log_event
+import pyotp
+import qrcode
+import io
+import secrets
+import os
+import base64
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +31,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 rp = PublicKeyCredentialRpEntity(id=settings.webauthn_rp_id, name=settings.webauthn_rp_name)
 server = Fido2Server(rp)
+
+async def check_lockdown(redis = Depends(get_redis)):
+    lockdown = redis.get("system_lockdown")
+    if lockdown and (lockdown.decode() if hasattr(lockdown, "decode") else lockdown) == "true":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+            detail="System is currently in Secure Lockdown. New registrations and modifications are suspended."
+        )
 
 def bytes_to_base64(obj):
     if isinstance(obj, bytes):
@@ -39,9 +55,150 @@ def bytes_to_base64(obj):
 
 from core.security import create_access_token, create_refresh_token, verify_token
 
-@router.post("/register/begin", dependencies=[Depends(RateLimit(3, 60))])
+@router.post("/register/totp/setup")
+async def register_totp_setup(username: str, db: Session = Depends(get_db), redis = Depends(get_redis)):
+    """Generate TOTP secret and QR code for a new user."""
+    # Check if user already exists
+    user = db.scalar(select(User).where(User.username == username))
+    if user and user.is_totp_enabled:
+        raise HTTPException(status_code=400, detail="User already registered with TOTP")
+    
+    # Generate a temporary secret and store in Redis until verified
+    secret = pyotp.random_base32()
+    redis.setex(f"reg_totp_secret:{username}", 600, secret)
+    
+    totp = pyotp.TOTP(secret)
+    provisioning_uri = totp.provisioning_uri(name=username, issuer_name=settings.webauthn_rp_name)
+    
+    # Generate QR code image as base64
+    img = qrcode.make(provisioning_uri)
+    buf = io.BytesIO()
+    img.save(buf)
+    qr_base64 = base64.b64encode(buf.getvalue()).decode()
+    
+    return {
+        "secret": secret,
+        "qr_code": f"data:image/png;base64,{qr_base64}",
+        "provisioning_uri": provisioning_uri
+    }
+
+@router.post("/register/totp/verify")
+async def register_totp_verify(username: str, code: str = Body(..., embed=True), redis = Depends(get_redis)):
+    """Verify the first TOTP code to proceed with registration."""
+    secret = redis.get(f"reg_totp_secret:{username}")
+    if not secret:
+        raise HTTPException(status_code=400, detail="TOTP setup session expired or not started")
+    
+    totp = pyotp.TOTP(secret.decode() if isinstance(secret, bytes) else secret)
+    if totp.verify(code):
+        # Mark TOTP as verified in Redis for this session
+        redis.setex(f"reg_step_totp:{username}", 600, "verified")
+        return {"status": "success", "message": "TOTP verified"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+@router.get("/captcha/generate")
+async def captcha_generate(username: str, redis = Depends(get_redis)):
+    """
+    Generates a custom 'Odd One Out' visual puzzle.
+    """
+    asset_dir = "assets/captcha"
+    if not os.path.exists(asset_dir):
+        raise HTTPException(status_code=500, detail="Captcha assets missing")
+    
+    sets = [d for d in os.listdir(asset_dir) if os.path.isdir(os.path.join(asset_dir, d))]
+    if not sets:
+        raise HTTPException(status_code=500, detail="No captcha sets found")
+    
+    selected_set = secrets.choice(sets)
+    set_path = os.path.join(asset_dir, selected_set)
+    
+    with open(os.path.join(set_path, "normal.png"), "rb") as f:
+        normal_b64 = f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+    with open(os.path.join(set_path, "odd.png"), "rb") as f:
+        odd_b64 = f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+
+    images = [normal_b64] * 5
+    images.append(odd_b64)
+    
+    indices = list(range(6))
+    random.shuffle(indices)
+    
+    shuffled_images = []
+    correct_index = -1
+    for i, original_pos in enumerate(indices):
+        shuffled_images.append(images[original_pos])
+        if original_pos == 5:
+            correct_index = i
+            
+    redis.setex(f"captcha_answer:{username}", 300, str(correct_index))
+    
+    return {
+        "images": shuffled_images,
+        "instruction": "Select the visual anomaly (the odd one out) to continue"
+    }
+
+@router.post("/captcha/verify")
+async def captcha_verify(username: str, data: dict, db: Session = Depends(get_db), redis = Depends(get_redis)):
+    """
+    Verifies the index of the selected image.
+    """
+    user_index = data.get("index")
+    flow = data.get("flow", "register") # Default to register for backward compatibility
+    
+    if user_index is None:
+        raise HTTPException(status_code=400, detail="No index provided")
+        
+    correct_index = redis.get(f"captcha_answer:{username}")
+    if not correct_index:
+        raise HTTPException(status_code=400, detail="Captcha expired or not generated")
+        
+    stored_val = correct_index.decode() if hasattr(correct_index, 'decode') else correct_index
+    if str(user_index) == stored_val:
+        # Mark captcha as verified for the specific flow
+        redis.setex(f"{flow}_step_captcha:{username}", 600, "verified")
+        redis.delete(f"captcha_answer:{username}")
+
+        # If this is the final step of login, issue the tokens here
+        if flow == "login":
+            # Check if WebAuthn was already completed
+            if not redis.get(f"login_step_webauthn:{username}"):
+                 raise HTTPException(status_code=403, detail="Hardware authentication required first")
+            
+            user = db.scalar(select(User).where(User.username == username))
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            access_token = create_access_token(data={"sub": user.username, "id": user.id, "role": user.role})
+            refresh_token = create_refresh_token(db, user.id)
+            
+            # Cleanup login session
+            redis.delete(f"login_step_webauthn:{username}")
+            redis.delete(f"login_step_captcha:{username}")
+            
+            return {
+                "status": "success",
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "user_data": {
+                    "username": user.username,
+                    "role": user.role
+                }
+            }
+
+        return {"status": "success"}
+    else:
+        raise HTTPException(status_code=400, detail="Visual mismatch detected")
+
+@router.post("/register/begin", dependencies=[Depends(RateLimit(3, 60)), Depends(check_lockdown)])
 async def register_begin(username: str, db: Session = Depends(get_db), redis = Depends(get_redis)):
     """Begin WebAuthn registration."""
+    # Enforce multi-step verification
+    if not redis.get(f"reg_step_totp:{username}"):
+        raise HTTPException(status_code=403, detail="Authenticator App verification required first")
+    if not redis.get(f"reg_step_captcha:{username}"):
+        raise HTTPException(status_code=403, detail="Captcha verification required first")
+
     user = db.scalar(select(User).where(User.username == username))
     if not user:
         user = User(
@@ -51,13 +208,21 @@ async def register_begin(username: str, db: Session = Depends(get_db), redis = D
         db.add(user)
         db.commit()
         db.refresh(user)
+    
+    # Save the TOTP secret to the user now that we are finalizing
+    totp_secret = redis.get(f"reg_totp_secret:{username}")
+    if totp_secret:
+        user.totp_secret = totp_secret.decode() if isinstance(totp_secret, bytes) else totp_secret
+        user.is_totp_enabled = True
+        db.commit()
 
     credentials = db.scalars(select(WebAuthnCredential).where(WebAuthnCredential.user_id == user.id)).all()
     
     options, state = server.register_begin(
         {"id": user.id.encode(), "name": user.username, "displayName": user.username},
         credentials=[PublicKeyCredentialDescriptor(type="public-key", id=websafe_decode(c.credential_id)) for c in credentials],
-        user_verification=UserVerificationRequirement.REQUIRED
+        user_verification=UserVerificationRequirement.REQUIRED,
+        resident_key_requirement=ResidentKeyRequirement.PREFERRED
     )
 
     redis.setex(f"webauthn_state:{user.id}", 300, json.dumps(state))
@@ -92,6 +257,7 @@ async def register_begin(username: str, db: Session = Depends(get_db), redis = D
         "authenticatorSelection": {
             "authenticatorAttachment": getattr(pk.authenticator_selection, "authenticator_attachment", None),
             "requireResidentKey": getattr(pk.authenticator_selection, "require_resident_key", False),
+            "residentKey": getattr(pk.authenticator_selection, "resident_key", None),
             "userVerification": getattr(pk.authenticator_selection, "user_verification", "required")
         } if pk.authenticator_selection else None,
         "attestation": getattr(pk, "attestation", "direct")
@@ -218,50 +384,23 @@ async def login_complete(
             )
 
         # Update sign count
-        # In some fido2 versions, auth_data is the AuthenticatorData object itself
         new_counter = getattr(auth_data, "counter", getattr(getattr(auth_data, "authenticator_data", object()), "counter", 0))
-        
         cred.sign_count = new_counter
         db.commit()
 
-        # --- AI RISK ANALYSIS (C++ Engine) ---
-        from core.security_engine import security_engine
-        from services.alerts import send_security_alert
-        import asyncio
-        
-        risk = security_engine.get_risk_score(
-            user_id=str(user.id),
-            device_id=cred_id_encoded,
-            ip_address=request.client.host
-        )
-        
-        # Log the risk score
-        log_event(db, user.id, f"Risk Analysis: {risk['risk_level']}", risk_score=risk["score"])
-        
-        # Decision Logic
-        if risk["risk_level"] == "HIGH":
-            asyncio.create_task(send_security_alert(user.id, "High Risk Login Blocked", risk["score"], {"ip": request.client.host}))
-            raise HTTPException(
-                status_code=403, 
-                detail="Login blocked due to high security risk. Please contact support."
-            )
-        
-        if risk["risk_level"] == "MEDIUM":
-            asyncio.create_task(send_security_alert(user.id, "Medium Risk Login Detected", risk["score"], {"ip": request.client.host}))
-
-        # --- Issue Tokens ---
-        access_token = create_access_token(data={"sub": user.username, "id": user.id, "role": user.role})
-        refresh_token = create_refresh_token(db, user.id)
-        
+        # Mark WebAuthn as completed in Redis
+        redis.setex(f"login_step_webauthn:{username}", 300, "verified")
         redis.delete(f"webauthn_state:{user.id}")
         
+        # Log the success
+        log_event(db, user.id, "Hardware Auth Verified", risk_score=0.0)
+
         return {
-            "status": "authenticated", 
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer"  # nosec B105
+            "status": "captcha_required",
+            "message": "Hardware verified. Visual attestation required to complete protocol entry."
         }
     except Exception as e:
+        logger.error(f"Login error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/refresh")
@@ -312,7 +451,8 @@ async def step_up_begin(user: User = Depends(get_current_user), db: Session = De
         raise HTTPException(status_code=400, detail="No devices registered")
 
     options, state = server.authenticate_begin(
-        credentials=[PublicKeyCredentialDescriptor(type="public-key", id=websafe_decode(c.credential_id)) for c in credentials_db]
+        credentials=[PublicKeyCredentialDescriptor(type="public-key", id=websafe_decode(c.credential_id)) for c in credentials_db],
+        user_verification=UserVerificationRequirement.REQUIRED
     )
     
     from db.redis import redis_client
