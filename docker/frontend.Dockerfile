@@ -4,8 +4,7 @@ FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # Optimization: Use a cache mount for npm
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+RUN npm ci
 
 FROM base AS builder
 WORKDIR /app
