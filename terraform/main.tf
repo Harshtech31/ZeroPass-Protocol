@@ -74,6 +74,11 @@ resource "aws_instance" "zeropass_server" {
               usermod -aG docker ubuntu
               EOF
 
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+  }
+
   tags = {
     Name = "ZeroPass-Production-Server"
   }
