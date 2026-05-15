@@ -116,14 +116,15 @@ async def simulate_threat(
     """Simulate a high-risk security event for demonstration purposes."""
     from services.audit import log_event
     import random
+    import secrets
     
     fake_ips = ["192.168.1.100", "45.77.12.33", "103.44.22.11", "201.55.66.77"]
     actions = ["FAILED_HANDSHAKE", "UNAUTHORIZED_DEVICE_SIGNATURE", "BRUTE_FORCE_KEY_ATTEMPT", "MALICIOUS_PAYLOAD_DETECTION"]
     
     for _ in range(5):
-        ip = random.choice(fake_ips)
-        action = random.choice(actions)
-        score = random.uniform(0.75, 0.99)
+        ip = secrets.choice(fake_ips)
+        action = secrets.choice(actions)
+        score = random.uniform(0.75, 0.99)  # nosec: B311 (demo only)
         log_event(db, None, action, risk_score=score, ip_address=ip)
         
     return {"status": "success", "message": "High-risk events injected into SOC manifest."}
