@@ -240,9 +240,12 @@ export default function DashboardPage() {
         {/* Top Navigation / Status Bar */}
         <div className="flex justify-between items-center mb-12 p-6 bg-[#0a101a]/40 backdrop-blur-xl border border-white/5 rounded-[24px]">
           <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#7deded]/10 border border-[#7deded]/20">
-              <span className="w-1.5 h-1.5 bg-[#7deded] rounded-full animate-pulse"></span>
-              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-[#7deded]">Active Protocol</span>
+            <div className="flex items-center gap-3">
+              <img src="/logo.png" alt="ZeroPass Logo" className="w-6 h-6 object-contain" />
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#7deded]/10 border border-[#7deded]/20">
+                <span className="w-1.5 h-1.5 bg-[#7deded] rounded-full animate-pulse"></span>
+                <span className="text-[9px] font-black uppercase tracking-[0.2em] text-[#7deded]">Active Protocol</span>
+              </div>
             </div>
             <div className="h-4 w-px bg-white/10"></div>
             <p className="text-xs font-bold text-[#686e78]">

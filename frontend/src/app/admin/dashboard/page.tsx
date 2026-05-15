@@ -184,6 +184,7 @@ export default function SOCDashboard() {
                 Live SOC Feed
               </span>
             </div>
+            <img src="/logo.png" alt="ZeroPass Logo" className="w-16 h-16 object-contain mb-6 drop-shadow-[0_0_15px_rgba(220,38,38,0.3)]" />
             <h1 className="text-6xl font-black tracking-tighter uppercase leading-none">
               Intelligence <span className="text-red-600">Center</span>
             </h1>

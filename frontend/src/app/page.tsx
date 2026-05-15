@@ -10,9 +10,7 @@ export default function Home() {
       <nav className="relative z-50 border-b border-white/5 backdrop-blur-md bg-black/20">
         <div className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-[#7deded] rounded-lg shadow-[0_0_15px_rgba(125,237,237,0.3)] flex items-center justify-center">
-              <span className="text-[#0a101a] font-black text-xs">ZP</span>
-            </div>
+            <img src="/logo.png" alt="ZeroPass Logo" className="w-10 h-10 object-contain drop-shadow-[0_0_8px_rgba(125,237,237,0.3)]" />
             <span className="font-black tracking-tight text-lg uppercase">ZeroPass</span>
           </div>
           <div className="hidden md:flex items-center gap-10">
@@ -120,7 +118,7 @@ export default function Home() {
       <footer className="border-t border-white/5 py-20 px-8">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-10">
           <div className="flex items-center gap-3">
-            <div className="w-6 h-6 bg-white/20 rounded-md"></div>
+            <img src="/logo.png" alt="ZeroPass Logo" className="w-6 h-6 object-contain opacity-80" />
             <span className="font-black text-sm uppercase tracking-widest opacity-50">ZeroPass Protocol</span>
           </div>
           <div className="flex gap-10 text-[10px] font-black uppercase tracking-widest text-[#686e78]">
