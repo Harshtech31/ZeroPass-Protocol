@@ -1,9 +1,6 @@
 #!/bin/bash
 
 # Configuration
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
-
 DOMAIN="zeropass.dev"
 EMAIL="mharshith801@gmail.com" # Update this!
 

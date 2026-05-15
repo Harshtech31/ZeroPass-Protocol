@@ -9,8 +9,7 @@ RUN apt-get update && apt-get install -y \
 
 COPY requirements.txt .
 # Optimization: Use a cache mount for pip to speed up re-installs
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --prefix=/install -r requirements.txt
+RUN pip install --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
 FROM python:3.12-slim
