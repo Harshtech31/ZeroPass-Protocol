@@ -21,7 +21,6 @@ out/
 cpp-security-engine/build/
 
 # Docker
-*.dockerignore
 
 # IDE
 .vscode/

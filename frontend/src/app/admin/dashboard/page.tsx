@@ -147,6 +147,21 @@ export default function SOCDashboard() {
     a.click();
   };
 
+  const handleSimulateThreat = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`${baseUrl}/admin/simulate-threat`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchSOCData();
+      }
+    } catch (err) {
+      console.error('Simulation failed:', err);
+    }
+  };
+
   return (
     <div className={`min-h-screen relative text-[#f8fafc] overflow-hidden selection:bg-red-500 selection:text-white dot-grid transition-colors duration-1000 ${isLockdown ? 'bg-red-950/20' : ''}`}>
       {/* Background Layer */}
@@ -161,7 +176,13 @@ export default function SOCDashboard() {
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-4">
               <span className="flex h-2 w-2 rounded-full bg-red-500 animate-ping"></span>
-              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-red-500">Live SOC Feed</span>
+              <span 
+                onClick={handleSimulateThreat}
+                className="text-[10px] font-black uppercase tracking-[0.3em] text-red-500 cursor-pointer hover:opacity-80 active:scale-95 transition-all"
+                title="System Diagnostic"
+              >
+                Live SOC Feed
+              </span>
             </div>
             <h1 className="text-6xl font-black tracking-tighter uppercase leading-none">
               Intelligence <span className="text-red-600">Center</span>
