@@ -15,3 +15,4 @@ grpcio-tools
 prometheus-fastapi-instrumentator
 pyotp
 qrcode
+Pillow

@@ -94,7 +94,7 @@ async def captcha_generate(username: str, redis = Depends(get_redis)):
     """
     Generates a custom 'Odd One Out' visual puzzle.
     """
-    asset_dir = "backend/assets/captcha"
+    asset_dir = "assets/captcha"
     if not os.path.exists(asset_dir):
         raise HTTPException(status_code=500, detail="Captcha assets missing")
     
@@ -145,7 +145,8 @@ async def captcha_verify(username: str, data: dict, db: Session = Depends(get_db
     if not correct_index:
         raise HTTPException(status_code=400, detail="Captcha expired or not generated")
         
-    if str(user_index) == correct_index.decode():
+    stored_val = correct_index.decode() if hasattr(correct_index, 'decode') else correct_index
+    if str(user_index) == stored_val:
         # Mark captcha as verified for the specific flow
         redis.setex(f"{flow}_step_captcha:{username}", 600, "verified")
         redis.delete(f"captcha_answer:{username}")
