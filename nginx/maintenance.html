@@ -8,8 +8,8 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;900&family=JetBrains+Mono:wght@700&display=swap');
         
         :root {
-            --bg: #020617;
-            --primary: #ef4444;
+            --bg: #000000;
+            --primary: #7deded;
             --text: #f8fafc;
         }
 
@@ -25,13 +25,15 @@
             align-items: center;
             justify-content: center;
             overflow: hidden;
+            background-image: radial-gradient(#ffffff05 1px, transparent 1px);
+            background-size: 40px 40px;
         }
 
         .mesh {
             position: absolute;
             width: 100%;
             height: 100%;
-            background: radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0.05) 0%, transparent 50%);
+            background: radial-gradient(circle at 50% 50%, rgba(125, 237, 237, 0.05) 0%, transparent 50%);
             z-index: -1;
             animation: pulse 4s infinite;
         }
@@ -45,76 +47,104 @@
             text-align: center;
             max-width: 600px;
             padding: 2rem;
+            z-index: 10;
         }
 
-        .logo {
+        .logo-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 2.5rem;
+        }
+
+        .logo-img {
+            width: 80px;
+            height: 80px;
+            object-contain: contain;
+            margin-bottom: 1rem;
+            filter: drop-shadow(0 0 20px rgba(125, 237, 237, 0.3));
+        }
+
+        .logo-text {
             font-weight: 900;
-            font-size: 1.5rem;
-            letter-spacing: -0.05em;
+            font-size: 1.2rem;
+            letter-spacing: 0.1em;
             text-transform: uppercase;
-            margin-bottom: 2rem;
+            color: var(--text);
         }
 
-        .logo span { color: var(--primary); }
+        .logo-text span { color: var(--primary); }
 
         h1 {
             font-weight: 900;
-            font-size: 3rem;
-            letter-spacing: -0.02em;
+            font-size: 3.5rem;
+            letter-spacing: -0.04em;
             margin-bottom: 1rem;
             text-transform: uppercase;
+            background: linear-gradient(180deg, #fff 0%, #64748b 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
         p {
-            color: #64748b;
-            font-size: 1.1rem;
+            color: #686e78;
+            font-size: 1rem;
+            font-weight: 500;
             line-height: 1.6;
-            margin-bottom: 2rem;
+            margin-bottom: 2.5rem;
+            max-width: 450px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .loader {
             display: flex;
-            gap: 8px;
+            gap: 12px;
             justify-content: center;
-            margin-bottom: 2rem;
+            margin-bottom: 2.5rem;
         }
 
         .dot {
-            width: 12px;
-            height: 12px;
+            width: 8px;
+            height: 8px;
             background: var(--primary);
             border-radius: 50%;
-            animation: bounce 0.6s infinite alternate;
+            box-shadow: 0 0 10px var(--primary);
+            animation: bounce 0.8s infinite alternate;
         }
 
         .dot:nth-child(2) { animation-delay: 0.2s; }
         .dot:nth-child(3) { animation-delay: 0.4s; }
 
         @keyframes bounce {
-            to { opacity: 0.3; transform: translateY(-10px); }
+            to { opacity: 0.2; transform: scale(0.8); }
         }
 
         .status {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.7rem;
+            font-size: 0.6rem;
             text-transform: uppercase;
-            letter-spacing: 0.2em;
-            color: #475569;
+            letter-spacing: 0.4em;
+            color: #253754;
+            font-weight: 700;
         }
     </style>
 </head>
 <body>
     <div class="mesh"></div>
     <div class="container">
-        <div class="logo">Zero<span>Pass</span></div>
+        <div class="logo-container">
+            <img src="/logo.png" alt="ZeroPass" class="logo-img">
+            <div class="logo-text">Zero<span>Pass</span></div>
+        </div>
         <div class="loader">
             <div class="dot"></div>
             <div class="dot"></div>
             <div class="dot"></div>
         </div>
         <h1>Protocol Sync</h1>
-        <p>We are currently synchronizing global security protocols. This usually takes less than 30 seconds. Your biometrics remain secure.</p>
-        <div class="status">Initializing Core Handshake...</div>
+        <p>Deploying cryptographic identity layers. This usually takes less than 30 seconds. Your hardware enclaves remain isolated.</p>
+        <div class="status">Initializing Secure Handshake...</div>
     </div>
     <script>
         // Auto-refresh the page every 5 seconds to check if we're back up
